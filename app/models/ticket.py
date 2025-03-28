@@ -36,8 +36,6 @@ class TicketBase(SQLModel):
     handling_method: str = Field(sa_type=Text)  # 处理方法
 
 
-
-
 class Ticket(TicketBase, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     user_id: int = Field(foreign_key="user.id")
@@ -51,7 +49,6 @@ class Ticket(TicketBase, table=True):
         back_populates="tickets",
         link_model=TicketAttachmentLink
     )
-
 
 
 class TicketHistory(TicketBase, table=True):

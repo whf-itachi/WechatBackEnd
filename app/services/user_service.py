@@ -1,5 +1,4 @@
-from sqlalchemy.future import select
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy import select
 
 from app.db_services.database import AsyncSessionDep
 from app.models.user import User
@@ -10,9 +9,7 @@ from fastapi import HTTPException
 async def create_user_service(session: AsyncSessionDep, user_data: UserCreate):
     """创建新用户"""
     print("sds...")
-
     try:
-
         new_user = User(**user_data.model_dump())
         print(new_user, '.........')
         print(user_data.model_dump())  # 查看转换后的数据

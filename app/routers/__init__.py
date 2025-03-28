@@ -10,7 +10,7 @@ router = APIRouter(
 
 # 导入子路由并合并（需放在最后）
 from .user_router import router as user
-from .wechat import router as wechat_router
+from .ticket_router import router as ticket
 
 router.include_router(user)
-router.include_router(wechat_router)
+router.include_router(ticket)
