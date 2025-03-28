@@ -1,0 +1,14 @@
+# 忽略配置文件
+*.ini
+
+# 忽略日志文件
+*.log
+/logs/
+
+# 忽略Python编译缓存
+**/*.pyc
+__pycache__/
+
+# 忽略虚拟环境
+.venv/
+venv/
