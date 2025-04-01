@@ -1,13 +1,13 @@
 from typing import Annotated
 from fastapi import Depends
-from sqlalchemy import event
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
+from typing import AsyncGenerator
 
 from app.config import settings
 
 
-# 异步引擎（业务专用）
-async_engine = create_async_engine(
+# 异步引擎
+engine = create_async_engine(
     settings.DB_ASYNC_URL,
     pool_size=settings.POOL_SIZE,
     max_overflow=settings.MAX_OVERFLOW,
@@ -18,20 +18,23 @@ async_engine = create_async_engine(
 
 # 异步会话工厂
 async_session_factory = async_sessionmaker(
-    bind=async_engine,
+    bind=engine,
     class_=AsyncSession,
-    expire_on_commit=False,  # 设置在事务提交后，会话中的对象不会自动过期，这样可以在事务提交后继续访问对象的属性。
+    expire_on_commit=False,  # 设置在事务提交后，会话中的对象不会自动过期
     autoflush=False  # 关闭自动刷新功能，需要手动调用 flush() 方法来将会话中的更改同步到数据库
 )
 
-# 依赖注入
-async def get_async_session() -> AsyncSession:
+# 获取数据库会话的依赖函数
+async def get_db() -> AsyncGenerator[AsyncSession, None]:
+    """获取数据库会话"""
     async with async_session_factory() as session:
         try:
             yield session
         except Exception:
             await session.rollback()
             raise
+        finally:
+            await session.close()
 
-
-AsyncSessionDep = Annotated[AsyncSession, Depends(get_async_session)]
+# 数据库会话类型
+AsyncSessionDep = Annotated[AsyncSession, Depends(get_db)]

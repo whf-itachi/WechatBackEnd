@@ -4,16 +4,15 @@ from sqlmodel import SQLModel, Field
 
 
 class User(SQLModel, table=True):
-    """用户信息表"""
+    """用户表"""
     id: Optional[int] = Field(default=None, primary_key=True)
-    name_en: str = Field(default=None, max_length=100)
-    name_zh: str = Field(default=None, max_length=50)
-    phone: str = Field(regex=r"^1[3-9]\d{9}$")
-    email: str = Field(max_length=50)
-    password: str = Field(max_length=200)  # 存储密码的哈希值
+    name: str = Field(max_length=50, unique=True)
+    phone: str = Field(max_length=11)
+    email: str = Field(max_length=100, unique=True)
+    password: str = Field(max_length=100)
     is_active: bool = Field(default=True)
-
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: Optional[datetime] = Field(default=None)
 
 
 class UserHistory(SQLModel, table=True):
@@ -24,5 +23,4 @@ class UserHistory(SQLModel, table=True):
     before_info: str = Field(max_length=100)  # 修改前
     after_info: str = Field(max_length=100)  # 修改后
     change_reason: str = Field(max_length=300)  # 修改原因
-
     changed_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))

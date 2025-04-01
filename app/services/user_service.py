@@ -1,30 +1,166 @@
 from sqlalchemy import select
+from passlib.context import CryptContext
+from datetime import timedelta
 
 from app.db_services.database import AsyncSessionDep
 from app.models.user import User
-from app.schemas.user_schema import UserCreate, UserUpdate
+from app.schemas.user_schema import UserCreate, UserUpdate, UserLogin
+from app.utils.jwt import create_access_token, ACCESS_TOKEN_EXPIRE_MINUTES
 from fastapi import HTTPException
+import re
+from typing import Tuple
+
+# 密码加密上下文
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+def verify_password(plain_password: str, hashed_password: str) -> bool:
+    """验证密码"""
+    return pwd_context.verify(plain_password, hashed_password)
+
+def get_password_hash(password: str) -> str:
+    """获取密码哈希值"""
+    return pwd_context.hash(password)
+
+def validate_password(password: str) -> bool:
+    """验证密码不为空"""
+    return bool(password and password.strip())
+
+def validate_email(email: str) -> bool:
+    """验证邮箱格式"""
+    pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
+    return bool(re.match(pattern, email))
+
+def validate_phone(phone: str) -> bool:
+    """验证手机号格式"""
+    pattern = r'^1[3-9]\d{9}$'
+    return bool(re.match(pattern, phone))
+
+async def get_user_by_id(session: AsyncSessionDep, user_id: int) -> User:
+    """根据ID获取用户"""
+    result = await session.execute(select(User).where(User.id == user_id))
+    user = result.scalars().first()
+    
+    if not user:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "message": "用户不存在",
+                "errors": ["用户不存在"]
+            }
+        )
+        
+    return user
+
+async def verify_user_login(session: AsyncSessionDep, login_data: UserLogin) -> Tuple[User, str]:
+    """验证用户登录"""
+    errors = []
+    
+    if not login_data.name:
+        errors.append("用户名不能为空")
+        
+    if not login_data.password:
+        errors.append("密码不能为空")
+        
+    if not errors:
+        result = await session.execute(select(User).where(User.name == login_data.name))
+        user = result.scalars().first()
+        
+        if not user:
+            errors.append("用户不存在")
+        elif not verify_password(login_data.password, user.password):
+            errors.append("密码错误")
+        elif not user.is_active:
+            errors.append("用户已被禁用")
+        
+    if errors:
+        raise HTTPException(
+            status_code=401,
+            detail={
+                "message": "登录失败",
+                "errors": errors
+            }
+        )
+    
+    # 生成访问令牌
+    access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    access_token = create_access_token(
+        data={"sub": str(user.id)}, expires_delta=access_token_expires
+    )
+    
+    return user, access_token
 
 # 创建用户
-async def create_user_service(session: AsyncSessionDep, user_data: UserCreate):
+async def create_user_service(session: AsyncSessionDep, user_data: UserCreate) -> Tuple[User, str]:
     """创建新用户"""
-    print("sds...")
     try:
-        new_user = User(**user_data.model_dump())
-        print(new_user, '.........')
-        print(user_data.model_dump())  # 查看转换后的数据
-
+        errors = []
+        
+        # 验证用户名
+        if not user_data.name:
+            errors.append("用户名不能为空")
+            
+        # 验证手机号
+        if not user_data.phone:
+            errors.append("手机号不能为空")
+        elif not validate_phone(user_data.phone):
+            errors.append("手机号格式不正确")
+            
+        # 验证邮箱
+        if not user_data.email:
+            errors.append("邮箱不能为空")
+        elif not validate_email(user_data.email):
+            errors.append("邮箱格式不正确")
+            
+        # 验证密码
+        if not user_data.password:
+            errors.append("密码不能为空")
+            
+        # 检查邮箱是否已存在
+        if not errors:
+            existing_user = await session.execute(
+                select(User).where(User.email == user_data.email)
+            )
+            if existing_user.scalars().first():
+                errors.append("邮箱已被注册")
+            
+        if errors:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "message": "注册失败",
+                    "errors": errors
+                }
+            )
+            
+        # 创建用户数据字典
+        user_dict = user_data.model_dump()
+        # 对密码进行加密
+        user_dict["password"] = get_password_hash(user_dict["password"])
+        
+        new_user = User(**user_dict)
         session.add(new_user)
-
-
         await session.commit()
         await session.refresh(new_user)
-        # return new_user
-        return new_user.model_dump()
-    except Exception as e:
-        print("===============:", e)
+        
+        # 生成访问令牌
+        access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+        access_token = create_access_token(
+            data={"sub": str(new_user.id)}, expires_delta=access_token_expires
+        )
+        
+        return new_user, access_token
+    except HTTPException:
         await session.rollback()
-        raise HTTPException(status_code=400, detail="Email 已被注册")
+        raise
+    except Exception as e:
+        await session.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "message": "创建用户失败",
+                "errors": [str(e)]
+            }
+        )
 
 # 获取所有用户
 async def get_users_service(session: AsyncSessionDep):
@@ -44,12 +180,84 @@ async def get_user_service(session: AsyncSessionDep, user_id: int):
 # 更新用户
 async def update_user_service(session: AsyncSessionDep, user_id: int, user_data: UserUpdate):
     """更新用户信息"""
-    user = await get_user_service(session, user_id)
-    for key, value in user_data.dict(exclude_unset=True).items():
-        setattr(user, key, value)
-    await session.commit()
-    await session.refresh(user)
-    return user
+    try:
+        errors = []
+        
+        # 获取用户
+        result = await session.execute(select(User).where(User.id == user_id))
+        user = result.scalars().first()
+        
+        if not user:
+            raise HTTPException(
+                status_code=404,
+                detail={
+                    "message": "用户不存在",
+                    "errors": ["用户不存在"]
+                }
+            )
+            
+        # 验证用户名
+        if user_data.name is not None and not user_data.name:
+            errors.append("用户名不能为空")
+            
+        # 验证手机号
+        if user_data.phone is not None:
+            if not user_data.phone:
+                errors.append("手机号不能为空")
+            elif not validate_phone(user_data.phone):
+                errors.append("手机号格式不正确")
+                
+        # 验证邮箱
+        if user_data.email is not None:
+            if not user_data.email:
+                errors.append("邮箱不能为空")
+            elif not validate_email(user_data.email):
+                errors.append("邮箱格式不正确")
+            else:
+                # 检查邮箱是否已被其他用户使用
+                existing_user = await session.execute(
+                    select(User).where(User.email == user_data.email, User.id != user_id)
+                )
+                if existing_user.scalars().first():
+                    errors.append("邮箱已被注册")
+                    
+        # 验证密码
+        if user_data.password is not None and not user_data.password:
+            errors.append("密码不能为空")
+            
+        if errors:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "message": "更新用户失败",
+                    "errors": errors
+                }
+            )
+            
+        # 更新用户数据
+        update_data = user_data.model_dump(exclude_unset=True)
+        if "password" in update_data:
+            update_data["password"] = get_password_hash(update_data["password"])
+            
+        for field, value in update_data.items():
+            setattr(user, field, value)
+            
+        await session.commit()
+        await session.refresh(user)
+        
+        return user
+    except HTTPException:
+        await session.rollback()
+        raise
+    except Exception as e:
+        await session.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "message": "更新用户失败",
+                "errors": [str(e)]
+            }
+        )
 
 # 删除用户
 async def delete_user_service(session: AsyncSessionDep, user_id: int):

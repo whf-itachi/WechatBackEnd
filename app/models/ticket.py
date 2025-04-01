@@ -29,11 +29,12 @@ class Attachment(SQLModel, table=True):
 
 
 class TicketBase(SQLModel):
+    """工单基础模型"""
     device_model: str = Field(max_length=100, nullable=False)  # 机型, 必填
-    customer: str = Field(max_length=200)  # 客户
+    customer: str = Field(max_length=200, nullable=False)  # 客户，必填
     fault_phenomenon: str = Field(sa_type=Text, nullable=False)  # 故障现象，必填
-    fault_reason: str = Field(sa_type=Text)  # 故障原因
-    handling_method: str = Field(sa_type=Text)  # 处理方法
+    fault_reason: Optional[str] = Field(sa_type=Text, nullable=True)  # 故障原因，可选
+    handling_method: Optional[str] = Field(sa_type=Text, nullable=True)  # 处理方法，可选
 
 
 class Ticket(TicketBase, table=True):

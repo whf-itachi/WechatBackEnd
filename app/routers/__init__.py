@@ -1,16 +1,14 @@
 # routers/__init__.py
 from fastapi import APIRouter
+from app.routers.user_router import router as user_router
+from app.routers.ticket_router import router as ticket_router
 
 # 创建父路由实例，配置公共属性
 router = APIRouter(
     prefix="/api/v1",          # 全局路径前缀
-    tags=["APIv1"],            # 文档分组标签
-    # dependencies=[Depends(verify_token)]  # 全局依赖（如JWT验证）
+    tags=["APIv1"]             # 文档分组标签
 )
 
-# 导入子路由并合并（需放在最后）
-from .user_router import router as user
-from .ticket_router import router as ticket
-
-router.include_router(user)
-router.include_router(ticket)
+# 注册子路由
+router.include_router(user_router, prefix="/users", tags=["用户管理"])
+router.include_router(ticket_router, prefix="/tickets", tags=["工单管理"])
