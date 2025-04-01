@@ -29,11 +29,8 @@ async def create_ticket(
         ticket_dict = ticket_data.model_dump()
         ticket_dict["user_id"] = current_user.id
         
-        # 创建新的工单对象
-        new_ticket_data = TicketCreate(**ticket_dict)
-        
         # 调用服务层创建工单
-        result = await create_ticket_service(db, new_ticket_data)
+        result = await create_ticket_service(db, ticket_dict)
         logger.info(f"成功创建问题单: {result.model_dump()}")
         return result
     except HTTPException as e:
@@ -49,13 +46,15 @@ async def create_ticket(
         logger.error(f"创建问题单失败 - 系统异常: {str(e)}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"创发生错误: {str(e)}"
+            detail=f"创建问题单时发生错误: {str(e)}"
         )
 
 
 # 查询所有问题单
-@router.get("/", response_model=List[TicketResponse])
+@router.get("/list", response_model=List[TicketResponse])
 async def get_tickets(
+    page: int = 1,
+    pageSize: int = 10,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
@@ -64,7 +63,7 @@ async def get_tickets(
     try:
         tickets = await get_tickets_service(db)
         logger.info(f"成功获取问题单列表，共 {len(tickets)} 条记录")
-        return [{"ticket": ticket.model_dump()} for ticket in tickets]
+        return tickets
     except HTTPException as e:
         logger.error(f"获取问题单列表失败 - HTTP异常: {str(e)}")
         raise e

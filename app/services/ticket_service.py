@@ -6,19 +6,26 @@ from app.models.ticket import Ticket
 from app.schemas.ticket_schema import TicketCreate, TicketUpdate
 
 
-async def create_ticket_service(session: AsyncSession, ticket_data: TicketCreate):
+async def create_ticket_service(session: AsyncSession, ticket_data: dict):
     """
     创建新的问题单
     
     Args:
         session: 数据库会话
-        ticket_data: 问题单数据
+        ticket_data: 问题单数据字典
         
     Returns:
         Ticket: 创建成功的问题单对象
     """
     try:
-        new_ticket = Ticket(**ticket_data.model_dump())
+        # 确保ticket_data中包含user_id
+        if 'user_id' not in ticket_data:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="创建工单失败: 缺少用户ID"
+            )
+            
+        new_ticket = Ticket(**ticket_data)
         session.add(new_ticket)
         await session.commit()
         await session.refresh(new_ticket)

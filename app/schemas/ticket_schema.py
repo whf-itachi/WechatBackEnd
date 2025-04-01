@@ -14,7 +14,6 @@ class TicketBase(SQLModel):
 
 class TicketCreate(TicketBase):
     """创建工单请求模型"""
-    # user_id: int = Field(..., description="创建用户ID")
     pass
 
 
