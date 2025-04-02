@@ -1,6 +1,6 @@
 from pydantic_settings import BaseSettings
 from pathlib import Path
-import os
+
 
 # 获取项目根目录
 BASE_DIR = Path(__file__).resolve().parent.parent

@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 from typing import Optional, List
 from sqlmodel import SQLModel, Field, Relationship
-from sqlalchemy import Text, Enum
+from sqlalchemy import Text
 
 class TicketAttachmentLink(SQLModel, table=True):
     ticket_id: int = Field(foreign_key="ticket.id", primary_key=True)

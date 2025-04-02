@@ -1,13 +1,12 @@
 from typing import Optional, List
 from datetime import datetime
 from sqlmodel import SQLModel, Field
-from app.models.ticket import AttachmentType
 
 
 class AttachmentBase(SQLModel):
     """附件基础模型"""
     file_path: str = Field(..., description="文件路径")
-    file_type: AttachmentType = Field(..., description="文件类型")
+    file_type: str = Field(..., description="文件类型")
 
 
 class AttachmentCreate(AttachmentBase):
