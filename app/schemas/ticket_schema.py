@@ -1,6 +1,27 @@
-from typing import Optional
+from typing import Optional, List
 from datetime import datetime
 from sqlmodel import SQLModel, Field
+from app.models.ticket import AttachmentType
+
+
+class AttachmentBase(SQLModel):
+    """附件基础模型"""
+    file_path: str = Field(..., description="文件路径")
+    file_type: AttachmentType = Field(..., description="文件类型")
+
+
+class AttachmentCreate(AttachmentBase):
+    """创建附件请求模型"""
+    pass
+
+
+class AttachmentResponse(AttachmentBase):
+    """附件响应模型"""
+    id: int = Field(..., description="附件ID")
+    upload_time: datetime = Field(..., description="上传时间")
+
+    class Config:
+        from_attributes = True
 
 
 class TicketBase(SQLModel):
@@ -10,6 +31,7 @@ class TicketBase(SQLModel):
     fault_phenomenon: str = Field(..., description="故障现象")
     fault_reason: Optional[str] = Field(None, description="故障原因")
     handling_method: Optional[str] = Field(None, description="处理方法")
+    handler: str = Field(..., description="故障处理人")
 
 
 class TicketCreate(TicketBase):
@@ -24,7 +46,7 @@ class TicketUpdate(SQLModel):
     fault_phenomenon: Optional[str] = Field(None, description="故障现象")
     fault_reason: Optional[str] = Field(None, description="故障原因")
     handling_method: Optional[str] = Field(None, description="处理方法")
-    user_id: Optional[int] = Field(None, description="创建用户ID")
+    # user_id: Optional[int] = Field(None, description="创建用户ID")
 
 
 class TicketResponse(TicketBase):
@@ -32,6 +54,7 @@ class TicketResponse(TicketBase):
     id: int = Field(..., description="工单ID")
     user_id: int = Field(..., description="创建用户ID")
     create_at: datetime = Field(..., description="创建时间")
+    attachments: List[AttachmentResponse] = Field(default=[], description="附件列表")
 
     class Config:
         from_attributes = True

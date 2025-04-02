@@ -8,16 +8,9 @@ class TicketAttachmentLink(SQLModel, table=True):
     attachment_id: int = Field(foreign_key="attachment.id", primary_key=True)
 
 
-class AttachmentType(str, Enum):
-    IMAGE = "image"
-    DOCUMENT = "document"
-    VIDEO = "video"
-
-
 class Attachment(SQLModel, table=True):
     """附件表"""
     id: Optional[int] = Field(default=None, primary_key=True)
-    ticket_id: int = Field(foreign_key="ticket.id")
     file_path: str = Field(max_length=200)
     file_type: str = Field(max_length=50)
     upload_time: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
@@ -35,6 +28,7 @@ class TicketBase(SQLModel):
     fault_phenomenon: str = Field(sa_type=Text, nullable=False)  # 故障现象，必填
     fault_reason: Optional[str] = Field(sa_type=Text, nullable=True)  # 故障原因，可选
     handling_method: Optional[str] = Field(sa_type=Text, nullable=True)  # 处理方法，可选
+    handler: str = Field(max_length=100)  # 故障处理人
 
 
 class Ticket(TicketBase, table=True):
@@ -43,22 +37,21 @@ class Ticket(TicketBase, table=True):
     create_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
     # 关联关系
-    histories: List["TicketHistory"] = Relationship(back_populates="ticket")
-
-    # 关联关系
-    attachments: List[Attachment] = Relationship(
+    attachments: List["Attachment"] = Relationship(
         back_populates="tickets",
         link_model=TicketAttachmentLink
     )
 
+    histories: List["TicketHistory"] = Relationship(back_populates="ticket")
 
-class TicketHistory(TicketBase, table=True):
+
+class TicketHistory(SQLModel, table=True):
     """问题单修改记录表"""
     id: Optional[int] = Field(default=None, primary_key=True)
-    ticket_id: int = Field(foreign_key="ticket.id")
-    changer_id: int = Field(foreign_key="user.id")  # 修改人id
-    create_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    change_notes: str = Field(sa_type=Text, nullable=False)
+    ticket_id: int = Field(foreign_key="ticket.id")  # 修改的哪条工单
+    changer_id: int = Field(foreign_key="user.id")  # 谁修改的
+    create_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))  # 修改时间
+    original_data: str = Field(sa_type=Text, nullable=False)  # 修改前数据
+    modified_data: str = Field(sa_type=Text, nullable=False)  # 修改后数据
 
-    ticket: Ticket = Relationship(back_populates="histories")
-
+    ticket: "Ticket" = Relationship(back_populates="histories")
