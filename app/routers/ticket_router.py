@@ -92,7 +92,7 @@ async def get_ticket(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="未找到该问题单"
             )
-        return {"ticket": ticket.model_dump()}
+        return ticket
     except HTTPException as e:
         logger.error(f"获取问题单信息失败 - HTTP异常: {str(e)}")
         raise e
@@ -129,7 +129,7 @@ async def update_ticket(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="未找到该问题单"
             )
-        return {"ticket": result.model_dump()}
+        return result
     except HTTPException as e:
         logger.error(f"更新问题单信息失败 - HTTP异常: {str(e)}")
         raise e
