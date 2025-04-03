@@ -20,8 +20,8 @@ engine = create_async_engine(
 async_session_factory = async_sessionmaker(
     bind=engine,
     class_=AsyncSession,
-    expire_on_commit=False,  # 设置在事务提交后，会话中的对象不会自动过期
-    autoflush=False  # 关闭自动刷新功能，需要手动调用 flush() 方法来将会话中的更改同步到数据库
+    expire_on_commit=True,
+    autoflush=True
 )
 
 # 获取数据库会话的依赖函数
