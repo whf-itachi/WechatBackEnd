@@ -1,6 +1,7 @@
 from sqlalchemy import select
 from passlib.context import CryptContext
 from datetime import timedelta
+import bcrypt
 
 from app.db_services.database import AsyncSessionDep
 from app.models.user import User
@@ -15,11 +16,21 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     """验证密码"""
-    return pwd_context.verify(plain_password, hashed_password)
+    try:
+        return bcrypt.checkpw(
+            plain_password.encode('utf-8'),
+            hashed_password.encode('utf-8')
+        )
+    except Exception:
+        # 如果 bcrypt 验证失败，尝试使用 passlib 验证
+        return pwd_context.verify(plain_password, hashed_password)
 
 def get_password_hash(password: str) -> str:
     """获取密码哈希值"""
-    return pwd_context.hash(password)
+    # 使用 bcrypt 生成盐并哈希密码
+    salt = bcrypt.gensalt()
+    hashed = bcrypt.hashpw(password.encode('utf-8'), salt)
+    return hashed.decode('utf-8')
 
 def validate_password(password: str) -> bool:
     """验证密码不为空"""
