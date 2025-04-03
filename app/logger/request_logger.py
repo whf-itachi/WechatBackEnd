@@ -6,11 +6,12 @@ from .logger import get_logger
 
 logger = get_logger('request')
 
+
+# 日志记录中间件，每次请求前记录该请求的相关信息
 class RequestLoggerMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         # 记录请求开始时间
         start_time = time.time()
-        print(".........................'", request.url)
         # 获取请求信息
         request_info = {
             "method": request.method,
@@ -34,7 +35,7 @@ class RequestLoggerMiddleware(BaseHTTPMiddleware):
         logger.info(f"收到请求: {json.dumps(request_info, ensure_ascii=False, indent=2)}")
         
         try:
-            # 处理请求
+            # 处理请求（等请求处理完后，再接着走下面的代码逻辑）
             response = await call_next(request)
             
             # 计算处理时间
