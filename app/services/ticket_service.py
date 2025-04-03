@@ -1,6 +1,7 @@
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi import HTTPException, status
+from sqlalchemy.orm import selectinload
 
 from app.models.ticket import Ticket
 from app.schemas.ticket_schema import TicketCreate, TicketUpdate
@@ -50,7 +51,9 @@ async def get_tickets_service(session: AsyncSession):
         List[Ticket]: 问题单列表
     """
     try:
-        result = await session.execute(select(Ticket))
+        # 使用 select 语句查询工单，并预加载 attachments 关系
+        query = select(Ticket).options(selectinload(Ticket.attachments))
+        result = await session.execute(query)
         return result.scalars().all()
     except Exception as e:
         raise HTTPException(
@@ -71,7 +74,10 @@ async def get_ticket_service(session: AsyncSession, ticket_id: int):
         Optional[Ticket]: 问题单对象，如果不存在则返回None
     """
     try:
-        return await session.get(Ticket, ticket_id)
+        # 使用 select 语句查询工单，并预加载 attachments 关系
+        query = select(Ticket).options(selectinload(Ticket.attachments)).where(Ticket.id == ticket_id)
+        result = await session.execute(query)
+        return result.scalar_one_or_none()
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,

@@ -45,6 +45,7 @@ class TicketUpdate(SQLModel):
     fault_phenomenon: Optional[str] = Field(None, description="故障现象")
     fault_reason: Optional[str] = Field(None, description="故障原因")
     handling_method: Optional[str] = Field(None, description="处理方法")
+    handler: Optional[str] = Field(None, description="故障处理人")
     # user_id: Optional[int] = Field(None, description="创建用户ID")
 
 

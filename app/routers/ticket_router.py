@@ -29,6 +29,13 @@ async def create_ticket(
         ticket_dict = ticket_data.model_dump()
         ticket_dict["user_id"] = current_user.id
         
+        # 验证处理人字段
+        if not ticket_dict.get("handler"):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="创建工单失败: 处理人不能为空"
+            )
+        
         # 调用服务层创建工单
         result = await create_ticket_service(db, ticket_dict)
         logger.info(f"成功创建问题单: {result.model_dump()}")
@@ -115,20 +122,27 @@ async def update_ticket(
     """更新问题单信息"""
     logger.info(f"收到更新问题单信息请求，问题单ID: {ticket_id}，当前用户: {current_user.id}")
     try:
+        # 获取当前工单信息
+        current_ticket = await get_ticket_service(db, ticket_id)
+        if not current_ticket:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="未找到该问题单"
+            )
+            
         # 将当前用户ID添加到更新数据中
         update_dict = ticket_data.model_dump(exclude_unset=True)
         update_dict["user_id"] = current_user.id
+        
+        # 如果更新了处理人，记录日志
+        if "handler" in update_dict and update_dict["handler"] != current_ticket.handler:
+            logger.info(f"工单 {ticket_id} 的处理人从 {current_ticket.handler} 变更为 {update_dict['handler']}")
         
         # 创建新的更新数据对象
         ticket_data_with_user = TicketUpdate(**update_dict)
         
         result = await update_ticket_service(db, ticket_id, ticket_data_with_user)
         logger.info(f"成功更新问题单信息: {result.model_dump()}")
-        if not result:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="未找到该问题单"
-            )
         return result
     except HTTPException as e:
         logger.error(f"更新问题单信息失败 - HTTP异常: {str(e)}")
