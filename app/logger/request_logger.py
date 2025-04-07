@@ -27,7 +27,15 @@ class RequestLoggerMiddleware(BaseHTTPMiddleware):
         try:
             body = await request.body()
             if body:
-                request_info["body"] = body.decode()
+                # 检查是否是文件上传请求
+                content_type = request.headers.get("content-type", "")
+                if "multipart/form-data" in content_type:
+                    request_info["body"] = "文件上传请求，跳过请求体记录"
+                else:
+                    try:
+                        request_info["body"] = body.decode()
+                    except UnicodeDecodeError:
+                        request_info["body"] = "二进制数据，跳过请求体记录"
         except Exception as e:
             request_info["body"] = f"无法读取请求体: {str(e)}"
         
