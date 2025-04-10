@@ -56,4 +56,4 @@ Thumbs.db
 /files
 
 ## 忽略迁移相关文件
-#alembic/versions/
+alembic/versions/
