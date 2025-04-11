@@ -54,15 +54,15 @@ class TicketUpdate(SQLModel):
 
 class TicketResponse(SQLModel):
     """工单响应模型"""
-    id: int = Field(..., description="工单ID")
-    device_model: str = Field(..., description="设备型号")
-    customer: str = Field(..., description="客户名称")
-    fault_phenomenon: str = Field(..., description="故障现象")
+    id: Optional[int] = Field(None, description="工单ID")
+    device_model: Optional[str] = Field(None, description="设备型号")
+    customer: Optional[str] = Field(None, description="客户名称")
+    fault_phenomenon: Optional[str] = Field(None, description="故障现象")
     fault_reason: Optional[str] = Field(None, description="故障原因")
     handling_method: Optional[str] = Field(None, description="处理方法")
-    handler: str = Field(..., description="故障处理人")
-    user_id: int = Field(..., description="创建用户ID")
-    create_at: datetime = Field(..., description="创建时间")
+    handler: Optional[str] = Field(None, description="故障处理人")
+    user_id: Optional[int] = Field(None, description="创建用户ID")
+    create_at: Optional[datetime] = Field(None, description="创建时间")
     attachments: List[AttachmentResponse] = Field(default=[], description="附件列表")
 
     class Config:
