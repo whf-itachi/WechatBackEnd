@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Depends, status, UploadFile, File, Form
+from fastapi import APIRouter, HTTPException, Depends, status, UploadFile, File, Form, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import SQLAlchemyError
 from app.db_services.database import get_db
@@ -504,12 +504,11 @@ async def delete_ticket(
             detail=f"删除问题单时发生错误: {str(e)}"
         )
 
-
 # 查询当前用户的所有问题单
 @router.get("/my-tickets", response_model=List[TicketResponse])
 async def get_my_tickets(
-    page: int = 1,
-    pageSize: int = 10,
+    page: int = Query(1, ge=1, description="页码，从1开始"),
+    pageSize: int = Query(10, ge=1, le=100, description="每页数量，最大100"),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
