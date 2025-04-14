@@ -18,11 +18,11 @@ logger = get_logger('ticket_router')
 
 # 文件上传配置
 ALLOWED_FILE_TYPES = {
-    'image/jpeg', 'image/png', 'application/pdf',
+    'image/jpeg', 'image/png', 'application/pdf', 'video/mp4', 'video/quicktime',
     'application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
     'application/vnd.ms-excel', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
 }
-MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
+MAX_FILE_SIZE = 600 * 1024 * 1024  # 600MB
 
 
 # 创建问题单
