@@ -27,7 +27,7 @@ class Settings(BaseSettings):
     # JWT配置
     JWT_SECRET_KEY: str
     JWT_ALGORITHM: str = "HS256"
-    JWT_ACCESS_TOKEN_EXPIRE_MINUTES: int = 300
+    JWT_ACCESS_TOKEN_EXPIRE_MINUTES: int = 5  # 开发中，暂时设置5分钟过期
     
     class Config:
         env_file = str(BASE_DIR / ".env")
