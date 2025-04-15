@@ -12,6 +12,7 @@ import os
 from datetime import datetime
 from app.models.ticket import Ticket, Attachment, TicketAttachmentLink
 from sqlalchemy import select
+import json
 
 router = APIRouter()
 logger = get_logger('ticket_router')
@@ -387,13 +388,35 @@ async def update_ticket(
     fault_reason: Optional[str] = Form(None),
     handling_method: Optional[str] = Form(None),
     handler: Optional[str] = Form(None),
+    delete_list: Optional[str] = Form(None),  # 修改为字符串类型，前端传入JSON字符串
     attachments: List[UploadFile] = File(None),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
     """更新问题单信息"""
+    # 打印入参
+    logger.info(f"更新问题单入参: ticket_id={ticket_id}, device_model={device_model}, "
+                f"customer={customer}, fault_phenomenon={fault_phenomenon}, "
+                f"fault_reason={fault_reason}, handling_method={handling_method}, "
+                f"handler={handler}, delete_list={delete_list}, "
+                f"attachments数量={len(attachments) if attachments else 0}")
+    
     logger.info(f"收到更新问题单信息请求，问题单ID: {ticket_id}，当前用户: {current_user.id}")
     try:
+        # 解析delete_list
+        delete_list_ids = []
+        if delete_list:
+            try:
+                delete_list_ids = json.loads(delete_list)
+                if not isinstance(delete_list_ids, list):
+                    raise ValueError("delete_list must be a list")
+                delete_list_ids = [int(id) for id in delete_list_ids]
+            except (json.JSONDecodeError, ValueError) as e:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Invalid delete_list format: {str(e)}"
+                )
+
         # 获取当前工单信息
         stmt = select(Ticket).where(Ticket.id == ticket_id)
         result = await db.execute(stmt)
@@ -414,8 +437,42 @@ async def update_ticket(
         ticket.handler = handler or current_user.username
         ticket.user_id = current_user.id
 
-        # 处理附件更新
-        if attachments is not None:  # 只有当附件字段存在时才处理
+        # 处理需要删除的附件
+        if delete_list_ids:
+            logger.info(f"需要删除的附件ID列表: {delete_list_ids}")
+            # 查询需要删除的附件关联
+            stmt = select(TicketAttachmentLink).where(
+                TicketAttachmentLink.ticket_id == ticket_id,
+                TicketAttachmentLink.attachment_id.in_(delete_list_ids)
+            )
+            result = await db.execute(stmt)
+            delete_links = result.scalars().all()
+            
+            if delete_links:
+                # 获取需要删除的附件ID
+                delete_attachment_ids = [link.attachment_id for link in delete_links]
+                
+                # 查询需要删除的附件
+                stmt = select(Attachment).where(Attachment.id.in_(delete_attachment_ids))
+                result = await db.execute(stmt)
+                delete_attachments = result.scalars().all()
+                
+                # 删除附件文件
+                for attachment in delete_attachments:
+                    try:
+                        if os.path.exists(attachment.file_path):
+                            os.remove(attachment.file_path)
+                    except Exception as e:
+                        logger.error(f"删除附件文件失败: {str(e)}")
+                
+                # 删除附件关联和附件记录
+                for link in delete_links:
+                    await db.delete(link)
+                for attachment in delete_attachments:
+                    await db.delete(attachment)
+
+        # 处理新上传的附件
+        if attachments:
             # 验证新上传的文件
             for attachment in attachments:
                 if attachment.content_type not in ALLOWED_FILE_TYPES:
@@ -429,74 +486,43 @@ async def update_ticket(
                         detail=f"文件大小超过限制: {attachment.filename}"
                     )
 
-            # 删除原有附件
-            # 1. 查询原有附件关联
-            stmt = select(TicketAttachmentLink).where(TicketAttachmentLink.ticket_id == ticket_id)
-            result = await db.execute(stmt)
-            old_links = result.scalars().all()
-            
-            if old_links:
-                # 2. 获取原有附件ID
-                old_attachment_ids = [link.attachment_id for link in old_links]
-                
-                # 3. 查询原有附件
-                stmt = select(Attachment).where(Attachment.id.in_(old_attachment_ids))
-                result = await db.execute(stmt)
-                old_attachments = result.scalars().all()
-                
-                # 4. 删除原有附件文件
-                for attachment in old_attachments:
-                    try:
-                        if os.path.exists(attachment.file_path):
-                            os.remove(attachment.file_path)
-                    except Exception as e:
-                        logger.error(f"删除附件文件失败: {str(e)}")
-                
-                # 5. 删除原有附件记录和关联
-                for link in old_links:
-                    await db.delete(link)
-                for attachment in old_attachments:
-                    await db.delete(attachment)
+            # 确保上传目录存在
+            upload_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "files")
+            if not os.path.exists(upload_dir):
+                os.makedirs(upload_dir)
 
-            # 保存新上传的附件
-            if attachments:  # 只有当有附件时才保存
-                # 确保上传目录存在
-                upload_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "files")
-                if not os.path.exists(upload_dir):
-                    os.makedirs(upload_dir)
-
-                for attachment in attachments:
-                    # 生成文件名
-                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                    new_filename = f"{timestamp}_{attachment.filename}"
-                    
-                    # 保存文件
-                    file_path = os.path.join(upload_dir, new_filename)
-                    try:
-                        contents = await attachment.read()
-                        with open(file_path, "wb") as buffer:
-                            buffer.write(contents)
-                    except Exception as e:
-                        logger.error(f"文件保存失败: {str(e)}")
-                        raise HTTPException(
-                            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                            detail="文件保存失败"
-                        )
-                    
-                    # 创建附件记录
-                    attachment_record = Attachment(
-                        file_path=file_path,
-                        file_type=attachment.content_type
+            for attachment in attachments:
+                # 生成文件名
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                new_filename = f"{timestamp}_{attachment.filename}"
+                
+                # 保存文件
+                file_path = os.path.join(upload_dir, new_filename)
+                try:
+                    contents = await attachment.read()
+                    with open(file_path, "wb") as buffer:
+                        buffer.write(contents)
+                except Exception as e:
+                    logger.error(f"文件保存失败: {str(e)}")
+                    raise HTTPException(
+                        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                        detail="文件保存失败"
                     )
-                    db.add(attachment_record)
-                    await db.flush()  # 获取 attachment_record.id
+                
+                # 创建附件记录
+                attachment_record = Attachment(
+                    file_path=file_path,
+                    file_type=attachment.content_type
+                )
+                db.add(attachment_record)
+                await db.flush()  # 获取 attachment_record.id
 
-                    # 创建关联关系
-                    link = TicketAttachmentLink(
-                        ticket_id=ticket.id,
-                        attachment_id=attachment_record.id
-                    )
-                    db.add(link)
+                # 创建关联关系
+                link = TicketAttachmentLink(
+                    ticket_id=ticket.id,
+                    attachment_id=attachment_record.id
+                )
+                db.add(link)
 
         # 提交事务
         try:
