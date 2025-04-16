@@ -10,6 +10,7 @@ class User(SQLModel, table=True):
     phone: str = Field(max_length=11)
     email: str = Field(max_length=100, unique=True)
     password: str = Field(max_length=100)
+    user_type: str = Field(max_length=50, default="employee")
     is_active: bool = Field(default=True)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: Optional[datetime] = Field(default=None)

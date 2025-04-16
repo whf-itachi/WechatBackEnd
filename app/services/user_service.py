@@ -136,8 +136,7 @@ async def create_user_service(session: AsyncSessionDep, user_data: UserCreate) -
             raise HTTPException(
                 status_code=400,
                 detail={
-                    "message": "注册失败",
-                    "errors": errors
+                    "message": "注册失败: " + str(errors)
                 }
             )
             
