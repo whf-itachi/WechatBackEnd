@@ -3,6 +3,19 @@ from typing import Optional, List
 from sqlmodel import SQLModel, Field, Relationship
 from sqlalchemy import Text
 
+
+class DeviceModel(SQLModel, table=True):
+    """工单基础模型"""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    device_model: str = Field(max_length=100, nullable=False)  # 机型, 必填
+
+
+class Customer(SQLModel, table=True):
+    """工单基础模型"""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    customer: str = Field(max_length=200, nullable=False)  # 客户，必填
+
+
 class TicketAttachmentLink(SQLModel, table=True):
     ticket_id: int = Field(foreign_key="ticket.id", primary_key=True)
     attachment_id: int = Field(foreign_key="attachment.id", primary_key=True)
