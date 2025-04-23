@@ -31,6 +31,9 @@ class UserUpdate(SQLModel):
     password: Optional[str] = Field(None, description="密码")
     is_active: Optional[bool] = Field(None, description="是否激活")
 
+class UserTypeUpdate(SQLModel):
+    user_type: Optional[str] = Field(None, description="用户类型")
+
 # 用户登录模型
 class UserLogin(SQLModel):
     name: str = Field(..., description="用户名")
@@ -51,3 +54,12 @@ class UserResponse(SQLModel):
 
     class Config:
         from_attributes = True
+
+
+class UserResponse(BaseModel):
+    id: int
+    name: str
+    email: str
+    user_type: str
+    is_active: bool
+    created_at: datetime

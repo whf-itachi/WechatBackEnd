@@ -31,6 +31,9 @@ async def bm_verify_token(request: Request):
             payload = verify_token(authorization)
             if payload:
                 raise HTTPException(status_code=400, detail="Token header invalid")
+
+            if payload.get("user_type") != "admin":
+                raise HTTPException(status_code=403, detail="无权操作")
     except Exception as e:
         logger.error("error: ", e)
 
