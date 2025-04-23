@@ -5,12 +5,11 @@ from .ticket_router import router as ticket_routers
 from .wx.wx_auth import router as wx_auth_routers
 # 创建父路由实例，配置公共属性
 router = APIRouter(
-    prefix="/api/v1",          # 全局路径前缀
-    tags=["APIv1"]             # 文档分组标签
+    prefix="/api/v1"  # 移动端全局路径前缀
 )
 
 # 注册子路由
-router.include_router(user_routers, prefix="/users", tags=["用户管理"])
-router.include_router(ticket_routers, prefix="/tickets", tags=["工单管理"])
+router.include_router(user_routers, prefix="/users")  # 用户管理
+router.include_router(ticket_routers, prefix="/tickets")  # 工单管理
 
-router.include_router(wx_auth_routers, prefix="/wx_auth", tags=["微信权鉴"])
+router.include_router(wx_auth_routers, prefix="/wx_auth")  # 微信权鉴

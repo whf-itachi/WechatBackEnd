@@ -1,22 +1,47 @@
-# 后台用户管理模块
-from fastapi import Request
-from fastapi import APIRouter
+from fastapi import Depends, HTTPException, status, APIRouter
+from fastapi.security import OAuth2PasswordRequestForm
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlmodel import select
+from datetime import timedelta
 
+from app.config import settings
+from app.db_services.database import get_db
+from app.dependencies.BM_auth import authenticate_user
 from app.logger import get_logger
+from app.models import User
+from app.utils.jwt import create_access_token
 
-router = APIRouter()
-logger = get_logger('user_management_router')
+router = APIRouter(prefix="/users")
+logger = get_logger('user_router')
 
 
-@router.api_route("/login", methods=["POST"], summary="后台用户登录接口")
-async def bm_user_login(
-        request: Request = None  # 用于接收 POST 请求的 XML 数据
-):
-    try:
-        body = await request.body()
-        logger.info(f"收到微信 POST 消息: {body.decode('utf-8')}")
-        # 这里需解析 XML 并逻辑（如回复消息）
-        return "success"  # 必须返回 success 告知微信服务器
+# 登录接口
+@router.post("/login")
+async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(), db: AsyncSession = Depends(get_db)):
+    user = await authenticate_user(db, form_data.username, form_data.password)
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect email or password",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    access_token_expires = timedelta(minutes=settings.JWT_ACCESS_TOKEN_EXPIRE_MINUTES)
+    access_token = create_access_token(
+        data={"admin": user.name}, expires_delta=access_token_expires
+    )
+    return {"access_token": access_token, "token_type": "bearer"}
 
-    except Exception as error:
-        return f"微信接口异常: {error}"
+
+# 登出接口
+@router.post("/logout")
+async def logout():
+    # 客户端收到响应后主动删除本地存储的JWT
+    return {"message": "Logged out successfully"}
+
+
+# 查询所有用户接口
+@router.get("/all")
+async def get_all_users(db: AsyncSession = Depends(get_db)):
+    """获取所有用户"""
+    result = await db.execute(select(User))
+    return result.scalars().all()
