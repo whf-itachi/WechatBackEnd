@@ -10,7 +10,7 @@ from app.db_services.database import get_db
 from app.logger import get_logger
 from app.models.ticket import DeviceModelBase, DeviceModel, CustomerBase, Customer
 
-router = APIRouter()
+router = APIRouter(prefix="/manager")
 logger = get_logger('ticket_router')
 
 
@@ -44,7 +44,7 @@ class PageResponse(BaseResponse):
 
 
 # ------------------------- 设备型号接口 -------------------------
-@router.post("/device-models",
+@router.post("/device_models",
              response_model=BaseResponse,
              responses={400: {"model": ErrorResponse}},
              summary="创建设备型号")
@@ -80,7 +80,7 @@ async def create_device_model(
         )
 
 
-@router.post("/device-models",
+@router.post("/device_models",
              response_model=BaseResponse,
              responses={
                  400: {"model": ErrorResponse},
