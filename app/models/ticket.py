@@ -4,16 +4,19 @@ from sqlmodel import SQLModel, Field, Relationship
 from sqlalchemy import Text
 
 
-class DeviceModel(SQLModel, table=True):
-    """工单基础模型"""
-    id: Optional[int] = Field(default=None, primary_key=True)
-    device_model: str = Field(max_length=100, nullable=False)  # 机型, 必填
+class DeviceModelBase(SQLModel):
+    device_model: str = Field(max_length=100, unique=True, nullable=False)
 
-
-class Customer(SQLModel, table=True):
-    """工单基础模型"""
+class DeviceModel(DeviceModelBase, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
-    customer: str = Field(max_length=200, nullable=False)  # 客户，必填
+    created_at: datetime = Field(default_factory=datetime.now)
+
+class CustomerBase(SQLModel):
+    customer: str = Field(max_length=200, unique=True, nullable=False)
+
+class Customer(CustomerBase, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    created_at: datetime = Field(default_factory=datetime.now)
 
 
 class TicketAttachmentLink(SQLModel, table=True):
