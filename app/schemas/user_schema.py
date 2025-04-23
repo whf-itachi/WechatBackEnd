@@ -54,12 +54,3 @@ class UserResponse(SQLModel):
 
     class Config:
         from_attributes = True
-
-
-class UserResponse(BaseModel):
-    id: int
-    name: str
-    email: str
-    user_type: str
-    is_active: bool
-    created_at: datetime
