@@ -1,8 +1,7 @@
 from datetime import datetime
-from imp import new_module
-from typing import Optional, List
+from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlmodel import SQLModel, Field, select, func
+from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 from pydantic import BaseModel
 

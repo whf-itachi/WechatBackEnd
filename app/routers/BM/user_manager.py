@@ -22,6 +22,7 @@ logger = get_logger('user_router')
 # 登录接口
 @router.post("/login")
 async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(), db: AsyncSession = Depends(get_db)):
+    """用户登录"""
     user = await authenticate_user(db, form_data.username, form_data.password)
     if not user:
         raise HTTPException(
@@ -39,6 +40,7 @@ async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(
 # 登出接口
 @router.post("/logout")
 async def logout():
+    """用户登出"""
     # 客户端收到响应后主动删除本地存储的JWT
     return {"message": "Logged out successfully"}
 
@@ -54,6 +56,7 @@ async def get_all_users(db: AsyncSession = Depends(get_db)):
 # 后台操作 新增用户
 @router.post("/create", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
 async def create_user_endpoint(user_data: UserCreate, db: AsyncSession = Depends(get_db)):
+    """新增用户"""
     try:
         user, token = await create_user_service(db, user_data)
         logger.info(f"用户创建成功: {user.model_dump()}")

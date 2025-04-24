@@ -4,7 +4,7 @@ from fastapi import HTTPException, status
 from sqlalchemy.orm import selectinload
 
 from app.models.ticket import Ticket
-from app.schemas.ticket_schema import TicketCreate, TicketUpdate
+from app.schemas.ticket_schema import TicketUpdate
 
 
 async def create_ticket_service(session: AsyncSession, ticket_data: dict):
