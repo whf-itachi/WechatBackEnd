@@ -11,7 +11,7 @@ from app.logger import get_logger
 import os
 from datetime import datetime
 from app.models.ticket import Ticket, Attachment, TicketAttachmentLink
-from sqlalchemy import select
+from sqlalchemy import select, cast, String, or_
 import json
 
 router = APIRouter()
@@ -310,6 +310,89 @@ async def get_my_tickets(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"查询当前用户问题单时发生错误: {str(e)}"
         )
+
+
+
+# 对所有字段进行全量字符串查询
+@router.get("/search", response_model=List[TicketResponse])
+async def search_all_fields(
+        query: str = Query(..., min_length=1),
+        db: AsyncSession = Depends(get_db),
+        current_user: User = Depends(get_current_user)
+):
+    """根据关键词搜索工单"""
+    logger.info(f"收到搜索工单请求，关键词: {query}，当前用户: {current_user.id}")
+    try:
+        # 构建搜索条件
+        model = Ticket
+        columns = [getattr(model, column.name) for column in model.__table__.columns]
+        conditions = [cast(col, String).like(f"%{query}%") for col in columns]
+
+        # 执行搜索
+        stmt = select(model).where(or_(*conditions))
+        result = await db.execute(stmt)
+        tickets = result.scalars().all()
+
+        # 获取所有工单ID
+        ticket_ids = [ticket.id for ticket in tickets]
+
+        # 一次性查询所有工单的附件
+        attachments_map = {}
+        if ticket_ids:
+            stmt = select(
+                TicketAttachmentLink.ticket_id,
+                Attachment
+            ).join(
+                Attachment,
+                TicketAttachmentLink.attachment_id == Attachment.id
+            ).where(
+                TicketAttachmentLink.ticket_id.in_(ticket_ids)
+            )
+
+            result = await db.execute(stmt)
+            for row in result:
+                ticket_id = row[0]
+                attachment = row[1]
+                if ticket_id not in attachments_map:
+                    attachments_map[ticket_id] = []
+
+                # 从文件路径中提取文件名
+                file_name = os.path.basename(attachment.file_path)
+                attachments_map[ticket_id].append({
+                    "id": attachment.id,
+                    "file_path": attachment.file_path,
+                    "file_type": attachment.file_type,
+                    "upload_time": attachment.upload_time,
+                    "file_name": file_name
+                })
+
+        # 构建响应
+        response_data = []
+        for ticket in tickets:
+            ticket_dict = {
+                "id": ticket.id,
+                "device_model": ticket.device_model,
+                "customer": ticket.customer,
+                "address": ticket.address,
+                "fault_phenomenon": ticket.fault_phenomenon,
+                "fault_reason": ticket.fault_reason,
+                "handling_method": ticket.handling_method,
+                "handler": ticket.handler,
+                "user_id": ticket.user_id,
+                "create_at": ticket.create_at,
+                "attachments": attachments_map.get(ticket.id, [])
+            }
+            response_data.append(ticket_dict)
+
+        logger.info(f"成功搜索工单，共 {len(tickets)} 条记录")
+        return response_data
+    except Exception as e:
+        logger.error(f"搜索工单失败 - 系统异常: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"搜索工单时发生错误: {str(e)}"
+        )
+
 
 
 # 根据问题单 id 查询问题单信息
@@ -619,5 +702,3 @@ async def delete_ticket(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"删除问题单时发生错误: {str(e)}"
         )
-
-
