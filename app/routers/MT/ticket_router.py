@@ -31,6 +31,7 @@ MAX_FILE_SIZE = 600 * 1024 * 1024  # 600MB
 async def create_ticket(
     device_model: str = Form(...),
     customer: str = Form(...),
+    address: Optional[str] = Form(None),
     fault_phenomenon: str = Form(...),
     fault_reason: Optional[str] = Form(None),
     handling_method: Optional[str] = Form(None),
@@ -60,6 +61,7 @@ async def create_ticket(
         ticket = Ticket(
             device_model=device_model,
             customer=customer,
+            address=address,
             fault_phenomenon=fault_phenomenon,
             fault_reason=fault_reason,
             handling_method=handling_method,
@@ -203,6 +205,7 @@ async def get_tickets(
                 "id": ticket.id,
                 "device_model": ticket.device_model,
                 "customer": ticket.customer,
+                "address": ticket.address,
                 "fault_phenomenon": ticket.fault_phenomenon,
                 "fault_reason": ticket.fault_reason,
                 "handling_method": ticket.handling_method,
@@ -285,6 +288,7 @@ async def get_my_tickets(
                 "id": ticket.id,
                 "device_model": ticket.device_model,
                 "customer": ticket.customer,
+                "address": ticket.address,
                 "fault_phenomenon": ticket.fault_phenomenon,
                 "fault_reason": ticket.fault_reason,
                 "handling_method": ticket.handling_method,
@@ -356,6 +360,7 @@ async def get_ticket(
             "id": ticket.id,
             "device_model": ticket.device_model,
             "customer": ticket.customer,
+            "address": ticket.address,
             "fault_phenomenon": ticket.fault_phenomenon,
             "fault_reason": ticket.fault_reason,
             "handling_method": ticket.handling_method,
@@ -384,6 +389,7 @@ async def update_ticket(
     ticket_id: int,
     device_model: str = Form(...),
     customer: str = Form(...),
+    address: Optional[str] = Form(None),
     fault_phenomenon: str = Form(...),
     fault_reason: Optional[str] = Form(None),
     handling_method: Optional[str] = Form(None),
@@ -396,7 +402,7 @@ async def update_ticket(
     """更新问题单信息"""
     # 打印入参
     logger.info(f"更新问题单入参: ticket_id={ticket_id}, device_model={device_model}, "
-                f"customer={customer}, fault_phenomenon={fault_phenomenon}, "
+                f"customer={customer}, address={address}, fault_phenomenon={fault_phenomenon}, "
                 f"fault_reason={fault_reason}, handling_method={handling_method}, "
                 f"handler={handler}, delete_list={delete_list}, "
                 f"attachments数量={len(attachments) if attachments else 0}")
@@ -431,6 +437,7 @@ async def update_ticket(
         # 更新工单基本信息
         ticket.device_model = device_model
         ticket.customer = customer
+        ticket.address = address
         ticket.fault_phenomenon = fault_phenomenon
         ticket.fault_reason = fault_reason
         ticket.handling_method = handling_method
@@ -560,6 +567,7 @@ async def update_ticket(
             "id": ticket.id,
             "device_model": ticket.device_model,
             "customer": ticket.customer,
+            "address": ticket.address,
             "fault_phenomenon": ticket.fault_phenomenon,
             "fault_reason": ticket.fault_reason,
             "handling_method": ticket.handling_method,
