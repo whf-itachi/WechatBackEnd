@@ -30,6 +30,7 @@ class TicketBase(SQLModel):
     """工单基础模型"""
     device_model: str = Field(..., description="设备型号")
     customer: str = Field(..., description="客户名称")
+    address: Optional[str] = Field(None, description="设备地址")
     fault_phenomenon: str = Field(..., description="故障现象")
     fault_reason: Optional[str] = Field(None, description="故障原因")
     handling_method: Optional[str] = Field(None, description="处理方法")
@@ -45,6 +46,7 @@ class TicketUpdate(SQLModel):
     """更新工单请求模型"""
     device_model: Optional[str] = Field(None, description="设备型号")
     customer: Optional[str] = Field(None, description="客户名称")
+    address: Optional[str] = Field(None, description="设备地址")
     fault_phenomenon: Optional[str] = Field(None, description="故障现象")
     fault_reason: Optional[str] = Field(None, description="故障原因")
     handling_method: Optional[str] = Field(None, description="处理方法")
@@ -57,6 +59,7 @@ class TicketResponse(SQLModel):
     id: Optional[int] = Field(None, description="工单ID")
     device_model: Optional[str] = Field(None, description="设备型号")
     customer: Optional[str] = Field(None, description="客户名称")
+    address: Optional[str] = Field(None, description="设备地址")
     fault_phenomenon: Optional[str] = Field(None, description="故障现象")
     fault_reason: Optional[str] = Field(None, description="故障原因")
     handling_method: Optional[str] = Field(None, description="处理方法")
