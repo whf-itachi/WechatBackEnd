@@ -93,7 +93,7 @@ async def verify_user_login(session: AsyncSessionDep, login_data: UserLogin) -> 
     # 生成访问令牌
     access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = create_access_token(
-        data={"sub": str(user_info.id)}, expires_delta=access_token_expires
+        data={"user_id": str(user_info.id), "user_type": str(user_info.user_type)}, expires_delta=access_token_expires
     )
     
     return user_info, access_token
@@ -153,7 +153,8 @@ async def create_user_service(session: AsyncSessionDep, user_data: UserCreate) -
         # 生成访问令牌
         access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
         access_token = create_access_token(
-            data={"sub": str(new_user.id)}, expires_delta=access_token_expires
+            # 修正后代码（补充用户类型）
+            data={"user_id": str(new_user.id), "user_type": str(new_user.user_type)}, expires_delta=access_token_expires
         )
         
         return new_user, access_token

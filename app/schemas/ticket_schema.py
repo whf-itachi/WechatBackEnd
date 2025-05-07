@@ -34,7 +34,7 @@ class TicketBase(SQLModel):
     fault_phenomenon: str = Field(..., description="故障现象")
     fault_reason: Optional[str] = Field(None, description="故障原因")
     handling_method: Optional[str] = Field(None, description="处理方法")
-    handler: str = Field(..., description="故障处理人")
+    handler: Optional[str] = Field(None, description="故障处理人")
 
 
 class TicketCreate(TicketBase):

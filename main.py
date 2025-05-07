@@ -29,4 +29,4 @@ app.include_router(router)
 
 if __name__ == "__main__":
     logger.info("正在启动服务器...")
-    uvicorn.run("__main__:app", host="0.0.0.0", port=8001, reload=True)
+    uvicorn.run("__main__:app", host="0.0.0.0", port=8000, reload=True)

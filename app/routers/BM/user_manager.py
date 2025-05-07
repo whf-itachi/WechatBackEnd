@@ -1,40 +1,31 @@
 from fastapi import Depends, HTTPException, status, APIRouter
-from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
-from datetime import timedelta
-
 from starlette.responses import Response
 
-from app.config import settings
 from app.db_services.database import get_db
-from app.dependencies.BM_auth import authenticate_user
 from app.logger import get_logger
 from app.models import User
-from app.schemas.user_schema import UserResponse, UserCreate, UserTypeUpdate
-from app.services.user_service import create_user_service, delete_user_service
-from app.utils.jwt import create_access_token
+from app.schemas.user_schema import UserResponse, UserCreate, UserTypeUpdate, UserLogin
+from app.services.user_service import create_user_service, delete_user_service, verify_user_login
 
-router = APIRouter(prefix="/users")
+router = APIRouter()
 logger = get_logger('user_router')
 
 
 # 登录接口
 @router.post("/login")
-async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(), db: AsyncSession = Depends(get_db)):
+async def login_for_access_token(login_data: UserLogin, db: AsyncSession = Depends(get_db)):
     """用户登录"""
-    user = await authenticate_user(db, form_data.username, form_data.password)
+    user, token = await verify_user_login(db, login_data)
     if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect email or password",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    access_token_expires = timedelta(minutes=settings.JWT_ACCESS_TOKEN_EXPIRE_MINUTES)
-    access_token = create_access_token(
-        data={"admin": user.name}, expires_delta=access_token_expires
-    )
-    return {"access_token": access_token, "token_type": "bearer"}
+
+    return {"access_token": token, "token_type": "bearer"}
 
 
 # 登出接口
