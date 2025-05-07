@@ -1,6 +1,6 @@
-from fastapi import APIRouter, HTTPException, Depends, status, UploadFile, File, Form, Query, Body
+from fastapi import APIRouter, HTTPException, Depends, status, UploadFile, File, Form, Query, Body, Response
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.exc import SQLAlchemyError
+from fastapi.responses import FileResponse
 from app.db_services.database import get_db
 from app.dependencies.BM_auth import bm_verify_token
 from app.services.ticket_service import delete_ticket_service
@@ -15,6 +15,7 @@ from sqlalchemy import select
 import json
 
 from app.services.user_service import get_user_by_id
+
 
 router = APIRouter()
 logger = get_logger('ticket_router')
@@ -451,3 +452,14 @@ async def delete_ticket(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"删除问题单时发生错误: {str(e)}"
         )
+
+
+@router.get("/files/preview")
+def preview_file(file_path: str):
+    # 安全检查（防止任意路径访问）
+    target_path = os.path.abspath(file_path)
+    if not os.path.isfile(target_path):
+        raise HTTPException(status_code=404, detail="非法访问路径")
+
+    return FileResponse(target_path)
+
