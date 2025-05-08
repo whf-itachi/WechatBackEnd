@@ -1,7 +1,7 @@
 from fastapi import Depends, HTTPException, status, APIRouter
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
-from starlette.responses import Response
+from starlette.responses import JSONResponse
 
 from app.db_services.database import get_db
 from app.logger import get_logger
@@ -77,36 +77,59 @@ async def update_user_type(
         db: AsyncSession = Depends(get_db)
 ):
     """仅更新用户类型字段"""
-    # 获取用户
-    result = await db.execute(select(User).where(User.id == user_id))
-    db_user = result.scalars().first()
-    if not db_user:
-        raise HTTPException(status_code=404, detail="用户不存在")
+    try:
+        # 获取用户
+        result = await db.execute(select(User).where(User.id == user_id))
+        db_user = result.scalars().first()
+        if not db_user:
+            raise HTTPException(status_code=404, detail="用户不存在")
 
-    # 仅更新user_type字段
-    if user_update.user_type is not None:
-        db_user.user_type = user_update.user_type
+        # 仅更新user_type字段
+        if user_update.user_type is not None:
+            print(".....................", user_update.user_type)
+            db_user.user_type = user_update.user_type
 
-    await db.commit()
-    await db.refresh(db_user)
+        await db.commit()
+        await db.refresh(db_user)
 
-    return Response(content="操作成功", status_code=200)
+        return JSONResponse(content={"message": "操作成功"}, status_code=200)
+    except Exception as e:
+        logger.error(f"用户更新失败 - 系统异常: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "message": "更新用户信息失败",
+                "errors": [str(e)]
+            }
+        )
 
 
 # 删除用户
-@router.delete("/{user_id}")
+@router.delete("/delete/{user_id}")
 async def delete_user(
-    user_id: int,
-    db: AsyncSession = Depends(get_db)
+        user_id: int,
+        db: AsyncSession = Depends(get_db)
 ):
     """删除用户"""
     try:
-        await delete_user_service(db, user_id)
+        # 查找用户
+        result = await db.execute(select(User).where(User.id == user_id))
+        db_user = result.scalars().first()
+
+        if not db_user:
+            raise HTTPException(status_code=404, detail="用户不存在")
+
+        # 删除用户
+        await db.delete(db_user)
+        await db.commit()
+
         logger.info(f"成功删除用户，用户ID: {user_id}")
         return {"message": "用户删除成功"}
+
     except HTTPException as e:
         logger.error(f"删除用户失败 - HTTP异常: {str(e)}")
         raise e
+
     except Exception as e:
         logger.error(f"删除用户失败 - 系统异常: {str(e)}", exc_info=True)
         raise HTTPException(

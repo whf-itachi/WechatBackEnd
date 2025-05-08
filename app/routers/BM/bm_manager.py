@@ -78,59 +78,6 @@ async def create_device_model(
             detail=str(e)
         )
 
-
-@router.post("/device_models",
-             response_model=BaseResponse,
-             responses={
-                 400: {"model": ErrorResponse},
-                 500: {"model": ErrorResponse}
-             },
-             summary="创建设备型号",
-             status_code=status.HTTP_201_CREATED)
-async def create_device_model(
-        data: DeviceModelBase,
-        db: AsyncSession = Depends(get_db)
-):
-    """创建新设备型号（自动生成created_at时间）"""
-    try:
-        existing = await db.execute(
-            select(DeviceModel)
-            .where(DeviceModel.device_model == data.device_model)
-        )
-        if existing.scalars().first():
-            logger.warning(f"重复创建设备型号尝试: {data.device_model}")
-            raise HTTPException(
-                status_code=400,
-                detail="设备型号已存在"
-            )
-
-        new_model = DeviceModel(**data.model_dump())
-
-        db.add(new_model)
-        await db.commit()
-        await db.refresh(new_model)
-
-        logger.info(f"设备型号创建成功 | ID:{new_model.id} | 型号:{new_model.device_model}")
-        return BaseResponse(
-            data=new_model.model_dump(),
-            message="创建成功"
-        )
-
-    except HTTPException as e:
-        raise e
-
-    except Exception as e:
-        logger.error(
-            f"设备型号创建失败 | 型号:{data.device_model} | 错误:{str(e)}",
-            exc_info=True
-        )
-        return ErrorResponse(
-            code=500,
-            message="服务器内部错误",
-            detail="系统繁忙，请稍后重试"  # 生产环境隐藏具体错误细节
-        )
-
-
 # ------------------------- 客户管理接口 -------------------------
 @router.post("/customers",
              response_model=BaseResponse,
