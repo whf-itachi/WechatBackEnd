@@ -16,6 +16,10 @@ class Settings(BaseSettings):
     # 数据库连接池配置
     POOL_SIZE: int = 5
     MAX_OVERFLOW: int = 10
+
+    # 阿里百炼秘钥
+    ALI_ACCESS_KEY_ID: str
+    ALI_ACCESS_KEY_SECRET: str
     
     @property
     def DB_ASYNC_URL(self) -> str:
@@ -27,7 +31,7 @@ class Settings(BaseSettings):
     # JWT配置
     JWT_SECRET_KEY: str
     JWT_ALGORITHM: str = "HS256"
-    JWT_ACCESS_TOKEN_EXPIRE_MINUTES: int = 5  # 开发中，暂时设置5分钟过期
+    JWT_ACCESS_TOKEN_EXPIRE_MINUTES: int = 30  # 开发中，暂时设置30分钟过期
     
     class Config:
         env_file = str(BASE_DIR / ".env")

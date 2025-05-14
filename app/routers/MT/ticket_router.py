@@ -1,3 +1,5 @@
+from fastapi import BackgroundTasks
+
 from fastapi import APIRouter, HTTPException, Depends, status, UploadFile, File, Form, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import SQLAlchemyError
@@ -14,6 +16,8 @@ from app.models.ticket import Ticket, Attachment, TicketAttachmentLink
 from sqlalchemy import select, cast, String, or_
 import json
 
+from app.utils.ali.BaiLianRAG import BaiLian
+
 router = APIRouter()
 logger = get_logger('ticket_router')
 
@@ -29,6 +33,7 @@ MAX_FILE_SIZE = 600 * 1024 * 1024  # 600MB
 # 创建问题单
 @router.post("/submit")
 async def create_ticket(
+    background_tasks: BackgroundTasks,
     device_model: str = Form(...),
     customer: str = Form(...),
     address: Optional[str] = Form(None),
@@ -124,6 +129,11 @@ async def create_ticket(
             )
         
         logger.info(f"工单创建成功: {ticket.id}")
+
+        # 新增提交大模型知识库，异步执行
+        bai_lian_obj = BaiLian(f"{ticket.id}.txt", ticket.model_dump())
+        background_tasks.add_task(bai_lian_obj.main)
+
         return {"message": "工单创建成功", "ticket_id": ticket.id}
         
     except HTTPException as e:

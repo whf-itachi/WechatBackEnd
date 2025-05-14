@@ -11,5 +11,4 @@ router = APIRouter(
 # 注册子路由
 router.include_router(user_routers, prefix="/users")  # 用户管理
 router.include_router(ticket_routers, prefix="/tickets")  # 工单管理
-
 router.include_router(wx_auth_routers, prefix="/wx_auth")  # 微信权鉴
