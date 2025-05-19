@@ -12,7 +12,7 @@ from typing import List, Optional
 from app.logger import get_logger
 import os
 from datetime import datetime
-from app.models.ticket import Ticket, Attachment, TicketAttachmentLink
+from app.models.ticket import Ticket, Attachment, TicketAttachmentLink, DeviceModel, Customer
 from sqlalchemy import select, cast, String, or_
 import json
 
@@ -403,6 +403,37 @@ async def search_all_fields(
             detail=f"搜索工单时发生错误: {str(e)}"
         )
 
+
+@router.get("/device_models", summary="获取设备型号列表")
+async def list_device_models(db: AsyncSession = Depends(get_db)):
+    """查询设备型号"""
+    try:
+        result = await db.execute(select(DeviceModel))
+        items = result.scalars().all()
+
+        return {"data": {"items": items}}
+    except Exception as e:
+        logger.error(f"查询设备型号失败: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"查询机型报错: {str(e)}"
+        )
+
+
+@router.get("/customers", summary="获取客户列表")
+async def list_customers(db: AsyncSession = Depends(get_db)):
+    """获取客户列表（全部）"""
+    try:
+        result = await db.execute(select(Customer))
+        items = result.scalars().all()
+
+        return {"data": {"items": items}}
+    except Exception as e:
+        logger.error(f"查询客户信息失败: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"查询客户报错: {str(e)}"
+        )
 
 
 # 根据问题单 id 查询问题单信息
