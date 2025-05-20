@@ -411,7 +411,7 @@ async def list_device_models(db: AsyncSession = Depends(get_db)):
         result = await db.execute(select(DeviceModel))
         items = result.scalars().all()
 
-        return {"data": {"items": items}}
+        return {"data": items}
     except Exception as e:
         logger.error(f"查询设备型号失败: {str(e)}")
         raise HTTPException(
@@ -427,7 +427,7 @@ async def list_customers(db: AsyncSession = Depends(get_db)):
         result = await db.execute(select(Customer))
         items = result.scalars().all()
 
-        return {"data": {"items": items}}
+        return {"data": items}
     except Exception as e:
         logger.error(f"查询客户信息失败: {str(e)}")
         raise HTTPException(
