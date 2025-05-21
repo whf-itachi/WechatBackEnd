@@ -7,7 +7,7 @@ from app.db_services.database import get_db
 from app.logger import get_logger
 from app.models import User
 from app.schemas.user_schema import UserResponse, UserCreate, UserTypeUpdate, UserLogin
-from app.services.user_service import create_user_service, delete_user_service, verify_user_login
+from app.services.user_service import create_user_service, verify_user_login
 
 router = APIRouter()
 logger = get_logger('user_router')
@@ -45,7 +45,7 @@ async def get_all_users(db: AsyncSession = Depends(get_db)):
 
 
 # 后台操作 新增用户
-@router.post("/create", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
+@router.post("/create", response_model=UserResponse)
 async def create_user_endpoint(user_data: UserCreate, db: AsyncSession = Depends(get_db)):
     """新增用户"""
     try:
