@@ -257,7 +257,7 @@ class BaiLian:
     @staticmethod
     def stream_chat(issue_str):
         responses = Application.call(
-            api_key="sk-ca9011fbf3b44699b0283e570d2249dc",
+            api_key="sk-51365fd44e35446089269deba6061870",
             app_id='dd81e603c7aa45c6a9c9c5df04e82a33',  # 替换为实际的应用 ID
             prompt=issue_str,
             stream=True,  # 流式输出
@@ -265,22 +265,13 @@ class BaiLian:
 
         for response in responses:
             if response.status_code != HTTPStatus.OK:
-                print(f'request_id={response.request_id}')
-                print(f'code={response.status_code}')
-                print(f'message={response.message}')
-                print(f'请参考文档：https://help.aliyun.com/zh/model-studio/developer-reference/error-code')
+                yield f'Error: {response.status_code} - {response.message}\n'
             else:
-                print(f'{response.output.text}\n')  # 处理只输出文本text
+                yield response.output.text
 
 
 if __name__ == '__main__':
-    file_name = "x.txt"
-    row_data = {"总部": "海尼肯总部有三只招财猫"}
-    # x.upload_rag_document(file_name, row_data)
-    # x.get_list_of_index_documents()
-
     x = BaiLian()
-
     a = time.time()
     # x.chat("如果遇到设备运行精度出现误差过大应该怎么处理？")
     x.stream_chat("如果遇到设备运行精度出现误差过大应该怎么处理？")
