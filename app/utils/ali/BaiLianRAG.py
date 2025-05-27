@@ -3,6 +3,8 @@ import io
 
 import hashlib
 import time
+from http import HTTPStatus
+
 import requests
 
 from alibabacloud_bailian20231229.client import Client as bailian20231229Client
@@ -10,14 +12,16 @@ from alibabacloud_tea_openapi import models as open_api_models
 from alibabacloud_bailian20231229 import models as bailian_20231229_models
 from alibabacloud_tea_util import models as util_models
 from alibabacloud_tea_util.client import Client as UtilClient
+from dashscope import Application
 
 from app.config import settings
 
+
 class BaiLian:
-    def __init__(self, file_name, row_data):
-        self.work_space = "llm-345t38ujgp85mpr5"  # Workspace ID
+    def __init__(self):
+        self.work_space = "llm-byx2qf4bghcqdm93"  # Workspace ID
         self.CategoryId = "default"  # 所属类目
-        self.IndexId = "uqmmobjds5"  # 知识库id
+        self.IndexId = "msr1o2q7nm"  # 知识库id
         self.client = self.create_client()
         self.url = ""
         self.method = ""
@@ -25,8 +29,8 @@ class BaiLian:
         self.lease_id = ""
         self.md_5 = ""
         self.FileId = ""
-        self.file_name = file_name
-        self.row_data = row_data
+        self.file_name = ""
+        self.row_data = ""
         self.file_like = ""
 
     @staticmethod
@@ -182,7 +186,10 @@ class BaiLian:
         headers = {}
         try:
             # 复制代码运行请自行打印 API 的返回值
-            res = self.client.submit_index_add_documents_job_with_options(self.work_space, submit_index_add_documents_job_request, headers, runtime)
+            res = self.client.submit_index_add_documents_job_with_options(self.work_space,
+                                                                          submit_index_add_documents_job_request,
+                                                                          headers,
+                                                                          runtime)
             print("...", res)
         except Exception as error:
             print(error.message)
@@ -191,7 +198,13 @@ class BaiLian:
             UtilClient.assert_as_string(error.message)
 
 
-    def main(self):
+    def upload_rag_document(self, f_name, r_data):
+        """
+        上传文档到大模型的总调用函数
+        """
+        self.file_name = f_name
+        self.row_data = r_data
+
         self.calculate_md5()
         # 1. 申请文档上传租约
         self.apply_file_upload_lease()
@@ -204,9 +217,71 @@ class BaiLian:
         # 5. 向知识库追加已解析文档
         self.submit_index_add_documents_job()
 
+    def get_list_of_index_documents(self):
+        list_index_documents_request = bailian_20231229_models.ListIndexDocumentsRequest(
+            index_id=self.IndexId
+        )
+        runtime = util_models.RuntimeOptions()
+        headers = {}
+        try:
+            # 复制代码运行请自行打印 API 的返回值
+            res = self.client.list_index_documents_with_options(self.work_space,
+                                                                list_index_documents_request,
+                                                                headers,
+                                                                runtime)
+            print("get the res is:", res)
+        except Exception as error:
+            # 此处仅做打印展示，请谨慎对待异常处理，在工程项目中切勿直接忽略异常。
+            # 错误 message
+            print(error.message)
+            # 诊断地址
+            print(error.data.get("Recommend"))
+            UtilClient.assert_as_string(error.message)
+
+
+    @staticmethod
+    def chat(issue_str):
+        response = Application.call(
+            api_key="sk-ca9011fbf3b44699b0283e570d2249dc",
+            app_id='dd81e603c7aa45c6a9c9c5df04e82a33',  # 替换为实际的应用 ID
+            prompt=issue_str)
+        if response.status_code != HTTPStatus.OK:
+            print(f'request_id={response.request_id}')
+            print(f'code={response.status_code}')
+            print(f'message={response.message}')
+            print(f'请参考文档：https://help.aliyun.com/zh/model-studio/developer-reference/error-code')
+        else:
+            print(response.output.text)
+
+
+    @staticmethod
+    def stream_chat(issue_str):
+        responses = Application.call(
+            api_key="sk-ca9011fbf3b44699b0283e570d2249dc",
+            app_id='dd81e603c7aa45c6a9c9c5df04e82a33',  # 替换为实际的应用 ID
+            prompt=issue_str,
+            stream=True,  # 流式输出
+            incremental_output=True)  # 增量输出
+
+        for response in responses:
+            if response.status_code != HTTPStatus.OK:
+                print(f'request_id={response.request_id}')
+                print(f'code={response.status_code}')
+                print(f'message={response.message}')
+                print(f'请参考文档：https://help.aliyun.com/zh/model-studio/developer-reference/error-code')
+            else:
+                print(f'{response.output.text}\n')  # 处理只输出文本text
+
 
 if __name__ == '__main__':
     file_name = "x.txt"
     row_data = {"总部": "海尼肯总部有三只招财猫"}
-    x = BaiLian(file_name, row_data)
-    x.main()
+    # x.upload_rag_document(file_name, row_data)
+    # x.get_list_of_index_documents()
+
+    x = BaiLian()
+
+    a = time.time()
+    # x.chat("如果遇到设备运行精度出现误差过大应该怎么处理？")
+    x.stream_chat("如果遇到设备运行精度出现误差过大应该怎么处理？")
+    print(time.time() - a)

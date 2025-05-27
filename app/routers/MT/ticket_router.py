@@ -131,8 +131,8 @@ async def create_ticket(
         logger.info(f"工单创建成功: {ticket.id}")
 
         # 新增提交大模型知识库，异步执行
-        bai_lian_obj = BaiLian(f"{ticket.id}.txt", ticket.model_dump())
-        background_tasks.add_task(bai_lian_obj.main)
+        bai_lian = BaiLian()
+        background_tasks.add_task(bai_lian.upload_rag_document(f"{ticket.id}.txt", ticket.model_dump()))
 
         return {"message": "工单创建成功", "ticket_id": ticket.id}
         
