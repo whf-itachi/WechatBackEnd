@@ -5,6 +5,7 @@ from app.utils.ali.BaiLianRAG import BaiLian
 from fastapi import Request
 from fastapi.responses import StreamingResponse
 
+from app.utils.rate_limit import rate_limit
 
 router = APIRouter()
 logger = get_logger('chat_router')
@@ -12,6 +13,9 @@ logger = get_logger('chat_router')
 
 @router.post("/chat/stream")
 async def chat_stream(request: Request):
+    ip = request.client.host
+    await rate_limit(ip)  # 调用限流逻辑
+
     body = await request.json()
     issue_str = body.get("message", "")
 
