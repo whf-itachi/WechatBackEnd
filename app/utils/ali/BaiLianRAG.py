@@ -158,7 +158,7 @@ class BaiLian:
         try:
             while True:
                 print("查询文档解析状态...")
-                time.sleep(10)
+                time.sleep(3)
                 res = self.client.describe_file_with_options(self.work_space, self.FileId, headers, runtime)
                 if res.body.data.status == "PARSE_SUCCESS":
                     print("文档解析已经完成，可以进行问答使用")
