@@ -6,6 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.routers import router  # 从 __init__.py 导入聚合后的路由
 from app.logger import setup_logger, RequestLoggerMiddleware
+from app.tasks.scheduler import start_scheduler
 from app.utils.redis import init_redis, close_redis
 
 # 设置日志系统
@@ -13,8 +14,14 @@ logger = setup_logger()
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
+    # 初始化redis
     await init_redis()
+
+    # 开启定时任务
+    start_scheduler()
     yield
+
+    # 关闭redis
     await close_redis()
 
 app = FastAPI(lifespan=lifespan)

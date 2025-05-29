@@ -156,12 +156,16 @@ class BaiLian:
         runtime = util_models.RuntimeOptions()
         headers = {}
         try:
+            count = 0
             while True:
+                count += 1
                 print("查询文档解析状态...")
                 time.sleep(3)
                 res = self.client.describe_file_with_options(self.work_space, self.FileId, headers, runtime)
                 if res.body.data.status == "PARSE_SUCCESS":
                     print("文档解析已经完成，可以进行问答使用")
+                    break
+                if count >= 20:
                     break
                 print(res)
         except Exception as error:
@@ -202,20 +206,26 @@ class BaiLian:
         """
         上传文档到大模型的总调用函数
         """
-        self.file_name = f_name
-        self.row_data = r_data
+        try:
+            self.file_name = f_name
+            self.row_data = r_data
 
-        self.calculate_md5()
-        # 1. 申请文档上传租约
-        self.apply_file_upload_lease()
-        # 2. 上传文档到临时存储
-        self.upload_file()
-        # 3. 将文档添加到数据管理
-        self.add_file()
-        # 4. 查看解析文档状态(需要监听返回，等文档解析完毕后才能执行下一步)
-        self.describe_file()
-        # 5. 向知识库追加已解析文档
-        self.submit_index_add_documents_job()
+            self.calculate_md5()
+            # 1. 申请文档上传租约
+            self.apply_file_upload_lease()
+            # 2. 上传文档到临时存储
+            self.upload_file()
+            # 3. 将文档添加到数据管理
+            self.add_file()
+            # 4. 查看解析文档状态(需要监听返回，等文档解析完毕后才能执行下一步)
+            self.describe_file()
+            # 5. 向知识库追加已解析文档
+            self.submit_index_add_documents_job()
+        except Exception as e:
+            print(e)
+            return "error"
+        else:
+            return "success"
 
     def get_list_of_index_documents(self):
         list_index_documents_request = bailian_20231229_models.ListIndexDocumentsRequest(
