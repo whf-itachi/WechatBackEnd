@@ -64,5 +64,5 @@ async def process_pending_questions():
 
 
 def start_scheduler():
-    scheduler.add_job(process_pending_questions, IntervalTrigger(minutes=10))
+    scheduler.add_job(process_pending_questions, IntervalTrigger(minutes=1))
     scheduler.start()
