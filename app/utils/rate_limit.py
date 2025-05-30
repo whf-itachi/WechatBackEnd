@@ -21,9 +21,9 @@ async def rate_limit(ip: str):
     if day_count == 1:
         await redis_db.expire(day_key, 86400)  # 1 天
 
-    if hour_count > 20:
+    if hour_count > 100:
         logger.error(f"{ip}:请求超过每小时20次")
         raise HTTPException(status_code=429, detail="Rate limit exceeded: more than 20 requests per hour.")
-    if day_count > 100:
+    if day_count > 500:
         logger.error(f"{ip}:请求超过每天100次")
         raise HTTPException(status_code=429, detail="Rate limit exceeded: more than 100 requests per day.")
