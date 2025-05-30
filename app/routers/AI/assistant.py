@@ -17,11 +17,8 @@ logger = get_logger('chat_router')
 
 @router.post("/chat/stream")
 async def chat_stream(request: Request):
-    """
-    百炼大模型 流式接口
-    """
     ip = request.client.host
-    await rate_limit(ip)  # 调用限流逻辑
+    await rate_limit(ip)
 
     body = await request.json()
     issue_str = body.get("message", "")
@@ -36,7 +33,7 @@ async def chat_stream(request: Request):
 
 
 # 反馈信息接口
-@router.post("/question")
+@router.post("/feedback")
 async def create_question(data: QuestionCreate, db: AsyncSession = Depends(get_db)):
     question = Question(
         question=data.question
