@@ -13,6 +13,7 @@ from alibabacloud_bailian20231229 import models as bailian_20231229_models
 from alibabacloud_tea_util import models as util_models
 from alibabacloud_tea_util.client import Client as UtilClient
 from dashscope import Application
+from h11 import ERROR
 
 from app.config import settings
 
@@ -30,7 +31,6 @@ class BaiLian:
         self.md_5 = ""
         self.FileId = ""
         self.file_name = ""
-        self.row_data = ""
         self.file_like = ""
 
     @staticmethod
@@ -44,15 +44,20 @@ class BaiLian:
         config.endpoint = f'bailian.cn-beijing.aliyuncs.com'
         return bailian20231229Client(config)
 
+    @staticmethod
+    def save_the_obj_as_file(row_data):
+        content = '\n'.join(f'{key}: {value}' for key, value in row_data.items())
+        # 转换为 bytes 并放入内存文件对象
+        file_obj = io.BytesIO(content.encode('utf-8'))
 
-    def calculate_md5(self):
+        return file_obj
+
+    def calculate_md5(self, file_obj):
         """
         计算类文件对象的 MD5 值。
         file_like (io.BytesIO 或其他类文件对象): 类文件对象，已包含要计算的数据。
         """
-        content = '\n'.join(f'{key}: {value}' for key, value in self.row_data.items())
-        # 转换为 bytes 并放入内存文件对象
-        self.file_like = io.BytesIO(content.encode('utf-8'))
+        self.file_like = file_obj
 
         md5_hash = hashlib.md5()
         # 确保从头开始读取
@@ -64,7 +69,6 @@ class BaiLian:
         # 恢复指针（可选）
         self.file_like.seek(0)
         self.md_5 = md5_hash.hexdigest()
-
 
     def apply_file_upload_lease(self) -> None:
         """
@@ -151,7 +155,6 @@ class BaiLian:
             print(error.data.get("Recommend"))
             UtilClient.assert_as_string(error.message)
 
-
     def describe_file(self):
         runtime = util_models.RuntimeOptions()
         headers = {}
@@ -175,7 +178,6 @@ class BaiLian:
             # 诊断地址
             print(error.data.get("Recommend"))
             UtilClient.assert_as_string(error.message)
-
 
     def submit_index_add_documents_job(self):
         """
@@ -201,16 +203,18 @@ class BaiLian:
             print(error.data.get("Recommend"))
             UtilClient.assert_as_string(error.message)
 
-
-    def upload_rag_document(self, f_name, r_data):
+    def upload_rag_document(self, f_name, r_data=None, is_f=False):
         """
         上传文档到大模型的总调用函数
         """
         try:
             self.file_name = f_name
-            self.row_data = r_data
-
-            self.calculate_md5()
+            # 计算md5值
+            if is_f:  # 如果是文件类型则直接进行计算
+                self.CategoryId = "cate_5ae3ddb4fd3c46a68c293db916881439_11739496"  # 修改上传类目ID
+                self.calculate_md5(r_data)
+            else:  # 非文件类型先保存为文件
+                self.calculate_md5(self.save_the_obj_as_file(r_data))
             # 1. 申请文档上传租约
             self.apply_file_upload_lease()
             # 2. 上传文档到临时存储
@@ -248,7 +252,6 @@ class BaiLian:
             print(error.data.get("Recommend"))
             UtilClient.assert_as_string(error.message)
 
-
     @staticmethod
     def chat(issue_str):
         response = Application.call(
@@ -262,7 +265,6 @@ class BaiLian:
             print(f'请参考文档：https://help.aliyun.com/zh/model-studio/developer-reference/error-code')
         else:
             print(response.output.text)
-
 
     @staticmethod
     def stream_chat(issue_str):

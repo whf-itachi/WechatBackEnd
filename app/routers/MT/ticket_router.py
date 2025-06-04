@@ -134,7 +134,7 @@ async def create_ticket(
         def upload_rag(ticket):
             # 执行逻辑
             bai_lian = BaiLian()
-            bai_lian.upload_rag_document(f"{ticket.id}.txt", ticket.model_dump())
+            bai_lian.upload_rag_document(f"{ticket.id}.txt", r_data=ticket.model_dump(), is_f=False)
 
         background_tasks.add_task(upload_rag, ticket)
 

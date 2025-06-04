@@ -22,7 +22,7 @@ async def upload_rag_async(q):
 
     async with upload_limiter:
         # 运行上传，假设是同步函数，用 to_thread 调用
-        res = await asyncio.to_thread(llm.upload_rag_document, f_name=file_name, r_data=row_data)
+        res = await asyncio.to_thread(llm.upload_rag_document, f_name=file_name, r_data=row_data, is_f=False)
 
     return res  # 返回结果，True or False
 

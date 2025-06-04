@@ -1,12 +1,15 @@
-from fastapi import APIRouter, Depends, HTTPException
+from io import BytesIO
+
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, BackgroundTasks
 from sqlmodel import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from datetime import datetime, timezone
 
 from app.db_services.database import get_db
 from app.logger import get_logger
-from app.models.rag import Question
+from app.models.rag import Question, Documents
 from app.schemas.rag_schema import QuestionCreate, QuestionRead, QuestionUpdate
+from app.utils.ali.BaiLianRAG import BaiLian
 
 router = APIRouter()
 logger = get_logger('rag_router')
@@ -77,3 +80,47 @@ async def delete_question(question_id: int, db: AsyncSession = Depends(get_db)):
     db.add(question)
     await db.commit()
     return {"message": f"问题 {question_id} 删除成功"}
+
+
+# 添加知识库文档接口
+@router.post("/documents")
+async def add_rag_documents(background_tasks: BackgroundTasks,
+                            file: UploadFile = File(...),
+                            tag: str = "",
+                            db:AsyncSession = Depends(get_db)):
+    print("get here!")
+    max_file_size = 1024 * 1024 * 100  # 100 MB
+    if file.size > max_file_size:
+        raise HTTPException(status_code=400, detail="文件超过100M请拆分后重新上传")
+
+    # 判断是否已经存在同名文档
+    result = await db.execute(select(Documents).where(Documents.file_name == file.filename))
+    existing_doc = result.scalars().first()
+    if existing_doc:
+        raise HTTPException(status_code=400, detail="文件名已存在")
+
+    f_data = await file.read()
+    # 调用百炼sdk上传文档
+    def upload_rag(f_obj, data):
+        # 执行逻辑
+        bai_lian = BaiLian()
+        bai_lian.upload_rag_document(f_obj.filename, r_data=data, is_f=True)
+
+    background_tasks.add_task(upload_rag, file, BytesIO(f_data))
+
+    # 上传成功后进行文档表数据创建
+    new_document = Documents(file_name=file.filename, tag=tag, created_at=datetime.now())
+    db.add(new_document)
+    await db.commit()
+    await db.refresh(new_document)
+
+    return {"info": f"文件 {file.filename} 已成功上传", "document_id": new_document.id}
+
+
+# 获取上传文档列表（支持分页）
+@router.get("/documents")
+async def list_questions(skip: int = 0, limit: int = 10, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(
+        select(Documents).where(Documents.is_delete == 0).offset(skip).limit(limit)
+    )
+    return result.scalars().all()
