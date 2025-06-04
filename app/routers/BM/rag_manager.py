@@ -1,6 +1,6 @@
 from io import BytesIO
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, BackgroundTasks, Form
 from sqlmodel import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from datetime import datetime, timezone
@@ -86,9 +86,8 @@ async def delete_question(question_id: int, db: AsyncSession = Depends(get_db)):
 @router.post("/documents")
 async def add_rag_documents(background_tasks: BackgroundTasks,
                             file: UploadFile = File(...),
-                            tag: str = "",
+                            tag: str = Form(""),
                             db:AsyncSession = Depends(get_db)):
-    print("get here!")
     max_file_size = 1024 * 1024 * 100  # 100 MB
     if file.size > max_file_size:
         raise HTTPException(status_code=400, detail="文件超过100M请拆分后重新上传")
@@ -104,6 +103,7 @@ async def add_rag_documents(background_tasks: BackgroundTasks,
     def upload_rag(f_obj, data):
         # 执行逻辑
         bai_lian = BaiLian()
+        bai_lian.tag = tag  # 指定该文档的标签
         bai_lian.upload_rag_document(f_obj.filename, r_data=data, is_f=True)
 
     background_tasks.add_task(upload_rag, file, BytesIO(f_data))

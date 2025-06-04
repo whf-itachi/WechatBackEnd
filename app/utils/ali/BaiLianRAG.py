@@ -32,6 +32,7 @@ class BaiLian:
         self.FileId = ""
         self.file_name = ""
         self.file_like = ""
+        self.tag = ""
 
     @staticmethod
     def create_client() -> bailian20231229Client:
@@ -134,11 +135,19 @@ class BaiLian:
         """
         将文档添加到数据管理
         """
-        add_file_request = bailian_20231229_models.AddFileRequest(
-            lease_id=self.lease_id,
-            parser='DASHSCOPE_DOCMIND',
-            category_id=self.CategoryId
-        )
+        if self.tag:
+            add_file_request = bailian_20231229_models.AddFileRequest(
+                lease_id=self.lease_id,
+                parser='DASHSCOPE_DOCMIND',
+                category_id=self.CategoryId,
+                tags=[self.tag]
+            )
+        else:
+            add_file_request = bailian_20231229_models.AddFileRequest(
+                lease_id=self.lease_id,
+                parser='DASHSCOPE_DOCMIND',
+                category_id=self.CategoryId
+            )
         runtime = util_models.RuntimeOptions()
         headers = {}
         try:
