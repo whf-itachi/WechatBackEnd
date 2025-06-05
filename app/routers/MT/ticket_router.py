@@ -1,9 +1,12 @@
+import io
+
 from fastapi import BackgroundTasks
 
 from fastapi import APIRouter, HTTPException, Depends, status, UploadFile, File, Form, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import SQLAlchemyError
 from app.db_services.database import get_db
+from app.services.baiLian_service import process_full_rag_upload
 from app.services.ticket_service import delete_ticket_service
 from app.schemas.ticket_schema import TicketResponse
 from app.dependencies.auth import get_current_user
@@ -74,7 +77,7 @@ async def create_ticket(
             user_id=current_user.id
         )
         db.add(ticket)
-        await db.flush()  # 获取 ticket.id
+        await db.flush()
 
         # 处理文件上传
         if attachments:
@@ -130,13 +133,17 @@ async def create_ticket(
         
         logger.info(f"工单创建成功: {ticket.id}")
 
-        # 新增提交大模型知识库，异步执行
-        def upload_rag(ticket):
-            # 执行逻辑
-            bai_lian = BaiLian()
-            bai_lian.upload_rag_document(f"{ticket.id}.txt", r_data=ticket.model_dump(), is_f=False)
+        row_data = ticket.model_dump()
+        content = '\n'.join(f'{key}: {value}' for key, value in row_data.items())
+        file_bytes = content.encode('utf-8')
 
-        background_tasks.add_task(upload_rag, ticket)
+        dict_data = {
+            "id": ticket.id,
+            "f_type": "ticket",
+            "file_name": f"ticket_{ticket.id}.txt"
+        }
+
+        background_tasks.add_task(process_full_rag_upload, file_bytes, db, dict_data)
 
         return {"message": "工单创建成功", "ticket_id": ticket.id}
         

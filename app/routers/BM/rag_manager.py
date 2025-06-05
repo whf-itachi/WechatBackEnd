@@ -9,7 +9,7 @@ from app.db_services.database import get_db
 from app.logger import get_logger
 from app.models.rag import Question, Documents
 from app.schemas.rag_schema import QuestionCreate, QuestionRead, QuestionUpdate
-from app.utils.ali.BaiLianRAG import BaiLian
+from app.services.baiLian_service import process_full_rag_upload
 
 router = APIRouter()
 logger = get_logger('rag_router')
@@ -46,6 +46,7 @@ async def get_question(question_id: int, db: AsyncSession = Depends(get_db)):
 # 更新问题
 @router.put("/questions/{question_id}", response_model=QuestionRead)
 async def update_question(
+    background_tasks: BackgroundTasks,
     question_id: int,
     data: QuestionUpdate,
     db: AsyncSession = Depends(get_db)
@@ -59,6 +60,18 @@ async def update_question(
     question.status = 0  # 修改过后 处理状态恢复为 0，等待定时任务上传后标记为已处理
 
     # todo：调用大模型删除对应文档
+    # 根据修改后的内容重新提交大模型
+    row_data = question.model_dump()
+    content = '\n'.join(f'{key}: {value}' for key, value in row_data.items())
+    file_bytes = content.encode('utf-8')
+
+    dict_data = {
+        "id": question.id,
+        "f_type": "question",
+        "file_name": f"question_{question.id}.txt"
+    }
+
+    background_tasks.add_task(process_full_rag_upload, file_bytes, db, dict_data)
 
     question.updated_at = datetime.now(timezone.utc)
     db.add(question)
@@ -98,21 +111,21 @@ async def add_rag_documents(background_tasks: BackgroundTasks,
     if existing_doc:
         raise HTTPException(status_code=400, detail="文件名已存在")
 
-    f_data = await file.read()
-    # 调用百炼sdk上传文档
-    def upload_rag(f_obj, data):
-        # 执行逻辑
-        bai_lian = BaiLian()
-        bai_lian.tag = tag  # 指定该文档的标签
-        bai_lian.upload_rag_document(f_obj.filename, r_data=data, is_f=True)
-
-    background_tasks.add_task(upload_rag, file, BytesIO(f_data))
-
     # 上传成功后进行文档表数据创建
     new_document = Documents(file_name=file.filename, tag=tag, created_at=datetime.now())
     db.add(new_document)
     await db.commit()
     await db.refresh(new_document)
+
+    file_bytes = await file.read()
+    # 上传文档，并解析到数据库，修改解析状态
+    dict_data = {
+        "id": new_document.id,
+        "f_type": "document",
+        "tag": tag,
+        "file_name": file.filename
+    }
+    background_tasks.add_task(process_full_rag_upload, file_bytes, db, dict_data)
 
     return {"info": f"文件 {file.filename} 已成功上传", "document_id": new_document.id}
 

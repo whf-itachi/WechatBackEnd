@@ -12,6 +12,7 @@ class Question(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     question: str = Field(sa_type=Text, nullable=False)  # 问题内容
     answers: str = Field(sa_type=Text, nullable=True)  # 回答内容
+    file_id: str = Field(max_length=200, nullable=True)  # 文档ID
     status: int = Field(default=0)  # 处理状态
     is_delete: int = Field(default=0)  # 软删除
 
@@ -23,6 +24,7 @@ class Documents(SQLModel, table=True):
     """知识库上传文档"""
     id: Optional[int] = Field(default=None, primary_key=True)
     file_name: str = Field(max_length=200, unique=True, nullable=False)  # 文档名称
+    file_id: str = Field(max_length=200, nullable=True)  # 文档ID
     tag: str = Field(max_length=100, nullable=False)  # 文档标签
     status: int = Field(default=0)  # 处理状态
     is_delete: int = Field(default=0)  # 软删除

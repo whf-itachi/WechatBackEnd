@@ -1,3 +1,4 @@
+# 弃用，改为后台异步任务
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 from sqlmodel import select

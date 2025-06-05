@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+import asyncio
 import io
 
 import hashlib
@@ -13,7 +14,6 @@ from alibabacloud_bailian20231229 import models as bailian_20231229_models
 from alibabacloud_tea_util import models as util_models
 from alibabacloud_tea_util.client import Client as UtilClient
 from dashscope import Application
-from h11 import ERROR
 
 from app.config import settings
 
@@ -160,11 +160,8 @@ class BaiLian:
             # 此处仅做打印展示，请谨慎对待异常处理，在工程项目中切勿直接忽略异常。
             # 错误 message
             print(error.message)
-            # 诊断地址
-            print(error.data.get("Recommend"))
-            UtilClient.assert_as_string(error.message)
 
-    def describe_file(self):
+    async def describe_file(self):
         runtime = util_models.RuntimeOptions()
         headers = {}
         try:
@@ -172,7 +169,7 @@ class BaiLian:
             while True:
                 count += 1
                 print("查询文档解析状态...")
-                time.sleep(3)
+                await asyncio.sleep(3)
                 res = self.client.describe_file_with_options(self.work_space, self.FileId, headers, runtime)
                 if res.body.data.status == "PARSE_SUCCESS":
                     print("文档解析已经完成，可以进行问答使用")
@@ -212,28 +209,29 @@ class BaiLian:
             print(error.data.get("Recommend"))
             UtilClient.assert_as_string(error.message)
 
-    def upload_rag_document(self, f_name, r_data=None, is_f=False):
+    # 准备弃用，改为异步调用类替换该流程处理
+    def upload_rag_document(self, f_name, r_data=None, f_type="ticket"):
         """
         上传文档到大模型的总调用函数
         """
         try:
             self.file_name = f_name
             # 计算md5值
-            if is_f:  # 如果是文件类型则直接进行计算
+            if f_type == "document":  # 文档单独保存到文档类目
                 self.CategoryId = "cate_5ae3ddb4fd3c46a68c293db916881439_11739496"  # 修改上传类目ID
-                self.calculate_md5(r_data)
-            else:  # 非文件类型先保存为文件
-                self.calculate_md5(self.save_the_obj_as_file(r_data))
+
+            self.calculate_md5(r_data)
             # 1. 申请文档上传租约
             self.apply_file_upload_lease()
             # 2. 上传文档到临时存储
             self.upload_file()
             # 3. 将文档添加到数据管理
             self.add_file()
-            # 4. 查看解析文档状态(需要监听返回，等文档解析完毕后才能执行下一步)
-            self.describe_file()
-            # 5. 向知识库追加已解析文档
-            self.submit_index_add_documents_job()
+
+            # # 4. 查看解析文档状态(需要监听返回，等文档解析完毕后才能执行下一步)
+            # self.describe_file()
+            # # 5. 向知识库追加已解析文档
+            # self.submit_index_add_documents_job()
         except Exception as e:
             print(e)
             return "error"

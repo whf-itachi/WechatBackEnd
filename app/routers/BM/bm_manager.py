@@ -7,7 +7,7 @@ from pydantic import BaseModel
 
 from app.db_services.database import get_db
 from app.logger import get_logger
-from app.models.ticket import DeviceModelBase, DeviceModel, CustomerBase, Customer
+from app.models.ticket import DeviceModel, Customer
 
 router = APIRouter()
 logger = get_logger('ticket_router')
@@ -45,7 +45,7 @@ class PageResponse(BaseResponse):
 # ------------------------- 设备型号接口 -------------------------
 @router.post("/device_models", summary="创建设备型号")
 async def create_device_model(
-        data: DeviceModelBase,
+        data: DeviceModel,
         db: AsyncSession = Depends(get_db)):
     """创建新设备型号（自动生成创建时间）"""
     try:
@@ -92,7 +92,7 @@ async def list_device_models(
 @router.put("/device_models/{model_id}", summary="更新设备型号")
 async def update_device_model(
     model_id: int,
-    data: DeviceModelBase,
+    data: DeviceModel,
     db: AsyncSession = Depends(get_db)
 ):
     """根据 ID 更新设备型号"""
@@ -139,7 +139,7 @@ async def delete_device_model(model_id: int, db: AsyncSession = Depends(get_db))
 # ------------------------- 客户管理接口 -------------------------
 @router.post("/customers", summary="创建客户")
 async def create_customer(
-        data: CustomerBase,
+        data: Customer,
         db: AsyncSession = Depends(get_db)
 ):
     """创建新客户（自动生成创建时间）"""
@@ -187,7 +187,7 @@ async def list_customers(
 @router.put("/customers/{customer_id}", summary="更新客户信息")
 async def update_customer(
         customer_id: int,
-        data: CustomerBase,
+        data: Customer,
         db: AsyncSession = Depends(get_db)
 ):
     """更新客户信息（带版本控制）"""

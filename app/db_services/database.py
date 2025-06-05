@@ -10,7 +10,8 @@ from app.config import settings
 # 异步引擎
 engine = create_async_engine(
     settings.DB_ASYNC_URL,
-    poolclass=NullPool,  # 使用 NullPool 避免连接池问题
+    pool_size=5,
+    max_overflow=10,
     pool_pre_ping=True,
     echo=False  # 设置为 True 则会在控制台输出执行的 SQL 语句，方便调试
 )
