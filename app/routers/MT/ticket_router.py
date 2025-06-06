@@ -727,7 +727,7 @@ async def update_ticket(
         )
 
 
-# 根据问题单 id 删除问题单
+# 根据问题单 id 删除问题单（未使用，故没有添加rag文档删除功能）
 @router.delete("/{ticket_id}")
 async def delete_ticket(
     ticket_id: int,

@@ -1,9 +1,9 @@
-from fastapi import APIRouter, HTTPException, Depends, status, UploadFile, File, Form, Body
+from fastapi import APIRouter, HTTPException, Depends, status, UploadFile, File, Form, Body, BackgroundTasks
 from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi.responses import FileResponse
 from app.db_services.database import get_db
 from app.dependencies.BM_auth import bm_verify_token
-from app.services.baiLian_service import async_delete_rag_document
+from app.services.baiLian_service import async_delete_rag_document, process_full_rag_upload
 from app.services.ticket_service import delete_ticket_service
 from app.schemas.ticket_schema import TicketResponse, TicketCreate
 from app.models.user import User
@@ -30,9 +30,10 @@ ALLOWED_FILE_TYPES = {
 MAX_FILE_SIZE = 600 * 1024 * 1024  # 600MB
 
 
-# 创建问题单
+# 创建工单
 @router.post("/submit")
 async def create_ticket_json(
+        background_tasks: BackgroundTasks,
         ticket_data: TicketCreate = Body(...),
         db: AsyncSession = Depends(get_db),
         token_payload: dict = Depends(bm_verify_token)
@@ -54,6 +55,18 @@ async def create_ticket_json(
         )
         db.add(ticket)
         await db.commit()
+
+        row_data = ticket.model_dump()
+        content = '\n'.join(f'{key}: {value}' for key, value in row_data.items())
+        file_bytes = content.encode('utf-8')
+
+        dict_data = {
+            "id": ticket.id,
+            "f_type": "ticket",
+            "file_name": f"ticket_{ticket.id}.txt"
+        }
+
+        background_tasks.add_task(process_full_rag_upload, file_bytes, db, dict_data)
         logger.info(f"工单创建成功: {ticket.id}")
         return {"message": "工单创建成功", "ticket_id": ticket.id}
 
