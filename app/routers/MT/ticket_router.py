@@ -701,9 +701,12 @@ async def update_ticket(
 
         # 删除大模型文档
         if ticket.file_id:
-            bai_lian = BaiLian()
-            bai_lian.delete_rag_document(ticket.file_id)  # 删除文档
-            bai_lian.delete_rag_index(ticket.file_id)  # 删除知识库索引文档
+            try:
+                bai_lian = BaiLian()
+                bai_lian.delete_rag_document(ticket.file_id)  # 删除文档
+                bai_lian.delete_rag_index(ticket.file_id)  # 删除知识库索引文档
+            except Exception as e:
+                logger.error(f"移动端修改工单信息，删除大模型文档报错：{e}")
         # 重新上传大模型文档并跟新file_id字段
         row_data = ticket.model_dump()
         content = '\n'.join(f'{key}: {value}' for key, value in row_data.items())

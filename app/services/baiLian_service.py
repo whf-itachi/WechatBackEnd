@@ -5,10 +5,12 @@ from h11 import ERROR
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
+from app.logger import get_logger
 from app.models import Question, Ticket
 from app.models.rag import Documents
 from app.utils.ali.BaiLianRAG import BaiLian
 
+logger = get_logger('baiLian_service')
 
 class BaiLianTaskRunner:
     """
@@ -52,41 +54,47 @@ class BaiLianTaskRunner:
 
 # 上传并解析文件的总调用函数
 async def process_full_rag_upload(file_bytes: bytes, db: AsyncSession, dict_data: dict):
-    bai_lian = BaiLian()
-    file_name = dict_data.get("file_name")
-    f_type = dict_data.get("f_type")
-    table_id = dict_data.get("id")
-    bai_lian.tag = dict_data.get("tag")
+    try:
+        bai_lian = BaiLian()
+        file_name = dict_data.get("file_name")
+        f_type = dict_data.get("f_type")
+        table_id = dict_data.get("id")
+        bai_lian.tag = dict_data.get("tag")
 
-    file_obj = io.BytesIO(file_bytes)  # 后台再创建内存文件
+        file_obj = io.BytesIO(file_bytes)  # 后台再创建内存文件
 
-    # 上传文档
-    bai_lian.upload_rag_document(file_name, r_data=file_obj, f_type=f_type)
+        # 上传文档
+        bai_lian.upload_rag_document(file_name, r_data=file_obj, f_type=f_type)
 
-    # 添加到知识库并修改解析状态
-    runner = BaiLianTaskRunner(bai_lian, db)
-    await runner.run(table_id=table_id, f_type=f_type)
+        # 添加到知识库并修改解析状态
+        runner = BaiLianTaskRunner(bai_lian, db)
+        await runner.run(table_id=table_id, f_type=f_type)
+    except Exception as e:
+        logger.error(f"上传解析文档报错：{e}")
 
 
 # 删除大模型文档
 async def async_delete_rag_document(db: AsyncSession, file_id: str, f_type="ticket"):
-    if f_type == "ticket":
-        result = await db.execute(select(Ticket).where(Ticket.file_id == file_id))
-    elif f_type == "question":
-        result = await db.execute(select(Question).where(Question.file_id == file_id))
-    elif f_type == "document":
-        result = await db.execute(select(Documents).where(Documents.file_id == file_id))
-    else:
-        return False
+    try:
+        if f_type == "ticket":
+            result = await db.execute(select(Ticket).where(Ticket.file_id == file_id))
+        elif f_type == "question":
+            result = await db.execute(select(Question).where(Question.file_id == file_id))
+        elif f_type == "document":
+            result = await db.execute(select(Documents).where(Documents.file_id == file_id))
+        else:
+            return False
 
-    db_res = result.scalar_one_or_none()
-    if not db_res:
-        print(f"删除无效文件ID: {file_id}")
-        return False
+        db_res = result.scalar_one_or_none()
+        if not db_res:
+            print(f"删除无效文件ID: {file_id}")
+            return False
 
-    await db.delete(db_res)
-    await db.commit()
+        await db.delete(db_res)
+        await db.commit()
 
-    bai_lian = BaiLian()
-    bai_lian.delete_rag_document(file_id)  # 删除文档
-    bai_lian.delete_rag_index(file_id)  # 删除知识库索引文档
+        bai_lian = BaiLian()
+        bai_lian.delete_rag_document(file_id)  # 删除文档
+        bai_lian.delete_rag_index(file_id)  # 删除知识库索引文档
+    except Exception as e:
+        logger.error(f"删除大模型文档报错：{e}")
