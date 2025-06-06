@@ -4,13 +4,12 @@ from fastapi.responses import FileResponse
 from app.db_services.database import get_db
 from app.dependencies.BM_auth import bm_verify_token
 from app.services.baiLian_service import async_delete_rag_document, process_full_rag_upload
-from app.services.ticket_service import delete_ticket_service
 from app.schemas.ticket_schema import TicketResponse, TicketCreate
 from app.models.user import User
 from typing import List, Optional
 from app.logger import get_logger
 import os
-from datetime import datetime, timezone
+from datetime import datetime
 from app.models.ticket import Ticket, Attachment, TicketAttachmentLink
 from sqlalchemy import select
 import json
@@ -140,6 +139,7 @@ async def get_tickets(
                 "handling_method": ticket.handling_method,
                 "handler": ticket.handler,
                 "user_id": ticket.user_id,
+                "status": ticket.status,
                 "creator": user_map.get(ticket.user_id, ""),  # 新增字段
                 "create_at": ticket.create_at
             }
