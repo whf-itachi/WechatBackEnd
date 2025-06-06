@@ -33,7 +33,7 @@ ALLOWED_FILE_TYPES = {
 MAX_FILE_SIZE = 600 * 1024 * 1024  # 600MB
 
 
-# 创建问题单
+# 创建工单
 @router.post("/submit")
 async def create_ticket(
     background_tasks: BackgroundTasks,
@@ -170,7 +170,7 @@ async def create_ticket(
         )
 
 
-# 查询所有问题单
+# 查询所有工单
 @router.get("/list", response_model=List[TicketResponse])
 async def get_tickets(
     page: int = 1,
@@ -178,8 +178,8 @@ async def get_tickets(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """查询所有问题单"""
-    logger.info(f"收到获取问题单列表请求，当前用户: {current_user.id}")
+    """查询所有工单"""
+    logger.info(f"收到获取工单列表请求，当前用户: {current_user.id}")
     try:
         # 查询工单
         stmt = select(Ticket).offset((page - 1) * pageSize).limit(pageSize)
@@ -237,20 +237,20 @@ async def get_tickets(
             }
             response_data.append(ticket_dict)
 
-        logger.info(f"成功获取问题单列表，共 {len(tickets)} 条记录")
+        logger.info(f"成功获取工单列表，共 {len(tickets)} 条记录")
         return response_data
     except HTTPException as e:
-        logger.error(f"获取问题单列表失败 - HTTP异常: {str(e)}")
+        logger.error(f"获取工单列表失败 - HTTP异常: {str(e)}")
         raise e
     except Exception as e:
-        logger.error(f"获取问题单列表失败 - 系统异常: {str(e)}", exc_info=True)
+        logger.error(f"获取工单列表失败 - 系统异常: {str(e)}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"查询所有问题单时发生错误: {str(e)}"
+            detail=f"查询所有工单时发生错误: {str(e)}"
         )
 
 
-# 查询当前用户的所有问题单
+# 查询当前用户的所有工单
 @router.get("/my-tickets", response_model=List[TicketResponse])
 async def get_my_tickets(
         page: int = Query(1, ge=1, description="页码，从1开始"),
@@ -258,8 +258,8 @@ async def get_my_tickets(
         db: AsyncSession = Depends(get_db),
         current_user: User = Depends(get_current_user)
 ):
-    """查询当前用户的所有问题单"""
-    logger.info(f"收到获取当前用户问题单列表请求，用户ID: {current_user.id}")
+    """查询当前用户的所有工单"""
+    logger.info(f"收到获取当前用户工单列表请求，用户ID: {current_user.id}")
     try:
         # 查询当前用户的工单
         stmt = select(Ticket).where(
@@ -320,16 +320,16 @@ async def get_my_tickets(
             }
             response_data.append(ticket_dict)
 
-        logger.info(f"成功获取当前用户问题单列表，共 {len(tickets)} 条记录")
+        logger.info(f"成功获取当前用户工单列表，共 {len(tickets)} 条记录")
         return response_data
     except HTTPException as e:
-        logger.error(f"获取当前用户问题单列表失败 - HTTP异常: {str(e)}")
+        logger.error(f"获取当前用户工单列表失败 - HTTP异常: {str(e)}")
         raise e
     except Exception as e:
-        logger.error(f"获取当前用户问题单列表失败 - 系统异常: {str(e)}", exc_info=True)
+        logger.error(f"获取当前用户工单列表失败 - 系统异常: {str(e)}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"查询当前用户问题单时发生错误: {str(e)}"
+            detail=f"查询当前用户工单时发生错误: {str(e)}"
         )
 
 
@@ -447,15 +447,15 @@ async def list_customers(db: AsyncSession = Depends(get_db)):
         )
 
 
-# 根据问题单 id 查询问题单信息
+# 根据工单 id 查询工单信息
 @router.get("/{ticket_id}", response_model=TicketResponse)
 async def get_ticket(
     ticket_id: int,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """根据ID获取问题单信息"""
-    logger.info(f"收到获取问题单信息请求，问题单ID: {ticket_id}，当前用户: {current_user.id}")
+    """根据ID获取工单信息"""
+    logger.info(f"收到获取工单信息请求，工单ID: {ticket_id}，当前用户: {current_user.id}")
     try:
         # 查询工单
         stmt = select(Ticket).where(Ticket.id == ticket_id)
@@ -465,7 +465,7 @@ async def get_ticket(
         if not ticket:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail="未找到该问题单"
+                detail="未找到该工单"
             )
 
         # 查询附件
@@ -505,20 +505,20 @@ async def get_ticket(
             "attachments": ticket_attachments
         }
 
-        logger.info(f"成功获取问题单信息: {ticket.id}")
+        logger.info(f"成功获取工单信息: {ticket.id}")
         return response_data
     except HTTPException as e:
-        logger.error(f"获取问题单信息失败 - HTTP异常: {str(e)}")
+        logger.error(f"获取工单信息失败 - HTTP异常: {str(e)}")
         raise e
     except Exception as e:
-        logger.error(f"获取问题单信息失败 - 系统异常: {str(e)}", exc_info=True)
+        logger.error(f"获取工单信息失败 - 系统异常: {str(e)}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"查询问题单信息时发生错误: {str(e)}"
+            detail=f"查询工单信息时发生错误: {str(e)}"
         )
 
 
-# 根据问题单 id 修改问题单信息
+# 根据工单 id 修改工单信息
 @router.put("/{ticket_id}", response_model=TicketResponse)
 async def update_ticket(
     ticket_id: int,
@@ -534,15 +534,15 @@ async def update_ticket(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """更新问题单信息"""
+    """更新工单信息"""
     # 打印入参
-    logger.info(f"更新问题单入参: ticket_id={ticket_id}, device_model={device_model}, "
+    logger.info(f"更新工单入参: ticket_id={ticket_id}, device_model={device_model}, "
                 f"customer={customer}, address={address}, fault_phenomenon={fault_phenomenon}, "
                 f"fault_reason={fault_reason}, handling_method={handling_method}, "
                 f"handler={handler}, delete_list={delete_list}, "
                 f"attachments数量={len(attachments) if attachments else 0}")
     
-    logger.info(f"收到更新问题单信息请求，问题单ID: {ticket_id}，当前用户: {current_user.id}")
+    logger.info(f"收到更新工单信息请求，工单ID: {ticket_id}，当前用户: {current_user.id}")
     try:
         # 解析delete_list
         delete_list_ids = []
@@ -566,7 +566,7 @@ async def update_ticket(
         if not ticket:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail="未找到该问题单"
+                detail="未找到该工单"
             )
 
         # 更新工单基本信息
@@ -712,45 +712,45 @@ async def update_ticket(
             "attachments": ticket_attachments
         }
 
-        logger.info(f"成功更新问题单信息: {ticket.id}")
+        logger.info(f"成功更新工单信息: {ticket.id}")
         return response_data
     except HTTPException as e:
-        logger.error(f"更新问题单信息失败 - HTTP异常: {str(e)}")
+        logger.error(f"更新工单信息失败 - HTTP异常: {str(e)}")
         await db.rollback()
         raise e
     except Exception as e:
-        logger.error(f"更新问题单信息失败 - 系统异常: {str(e)}", exc_info=True)
+        logger.error(f"更新工单信息失败 - 系统异常: {str(e)}", exc_info=True)
         await db.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"更新问题单信息时发生错误: {str(e)}"
+            detail=f"更新工单信息时发生错误: {str(e)}"
         )
 
 
-# 根据问题单 id 删除问题单（未使用，故没有添加rag文档删除功能）
+# 根据工单 id 删除工单（未使用，故没有添加rag文档删除功能）
 @router.delete("/{ticket_id}")
 async def delete_ticket(
     ticket_id: int,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """删除问题单"""
-    logger.info(f"收到删除问题单请求，问题单ID: {ticket_id}，当前用户: {current_user.id}")
+    """删除工单"""
+    logger.info(f"收到删除工单请求，工单ID: {ticket_id}，当前用户: {current_user.id}")
     try:
         result = await delete_ticket_service(db, ticket_id)
-        logger.info(f"成功删除问题单，问题单ID: {ticket_id}")
+        logger.info(f"成功删除工单，工单ID: {ticket_id}")
         if not result:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail="未找到该问题单"
+                detail="未找到该工单"
             )
-        return {"message": "问题单删除成功"}
+        return {"message": "工单删除成功"}
     except HTTPException as e:
-        logger.error(f"删除问题单失败 - HTTP异常: {str(e)}")
+        logger.error(f"删除工单失败 - HTTP异常: {str(e)}")
         raise e
     except Exception as e:
-        logger.error(f"删除问题单失败 - 系统异常: {str(e)}", exc_info=True)
+        logger.error(f"删除工单失败 - 系统异常: {str(e)}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"删除问题单时发生错误: {str(e)}"
+            detail=f"删除工单时发生错误: {str(e)}"
         )
