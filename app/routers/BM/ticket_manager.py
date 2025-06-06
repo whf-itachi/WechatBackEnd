@@ -16,7 +16,7 @@ from sqlalchemy import select
 import json
 
 from app.services.user_service import get_user_by_id
-
+from app.utils.ali.BaiLianRAG import BaiLian
 
 router = APIRouter()
 logger = get_logger('ticket_router')
@@ -235,6 +235,7 @@ async def get_ticket(
 # 根据工单 id 修改工单信息
 @router.put("/{ticket_id}", response_model=TicketResponse)
 async def update_ticket(
+        background_tasks: BackgroundTasks,
         ticket_id: int,
         device_model: str = Form(...),
         customer: str = Form(...),
@@ -410,6 +411,24 @@ async def update_ticket(
                 "file_name": file_name
             })
 
+        # 删除大模型文档
+        if ticket.file_id:
+            bai_lian = BaiLian()
+            bai_lian.delete_rag_document(ticket.file_id)  # 删除文档
+            bai_lian.delete_rag_index(ticket.file_id)  # 删除知识库索引文档
+        # 重新上传大模型文档并跟新file_id字段
+        row_data = ticket.model_dump()
+        content = '\n'.join(f'{key}: {value}' for key, value in row_data.items())
+        file_bytes = content.encode('utf-8')
+
+        dict_data = {
+            "id": ticket.id,
+            "f_type": "question",
+            "file_name": f"ticket_{ticket.id}.txt"
+        }
+
+        background_tasks.add_task(process_full_rag_upload, file_bytes, db, dict_data)
+        # 构建返回信息
         response_data = {
             "id": ticket.id,
             "device_model": ticket.device_model,
