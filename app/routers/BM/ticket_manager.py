@@ -3,13 +3,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi.responses import FileResponse
 from app.db_services.database import get_db
 from app.dependencies.BM_auth import bm_verify_token
+from app.services.baiLian_service import async_delete_rag_document
 from app.services.ticket_service import delete_ticket_service
 from app.schemas.ticket_schema import TicketResponse, TicketCreate
 from app.models.user import User
 from typing import List, Optional
 from app.logger import get_logger
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 from app.models.ticket import Ticket, Attachment, TicketAttachmentLink
 from sqlalchemy import select
 import json
@@ -435,13 +436,17 @@ async def delete_ticket(
     current_user = await get_user_by_id(db, token_payload.get("user_id"))
     logger.info(f"收到删除问题单请求，问题单ID: {ticket_id}，当前用户: {current_user.id}")
     try:
-        result = await delete_ticket_service(db, ticket_id)
-        logger.info(f"成功删除问题单，问题单ID: {ticket_id}")
-        if not result:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="未找到该问题单"
-            )
+        result = await db.execute(select(Ticket).where(Ticket.id == ticket_id))
+        db_ticket = result.scalar_one_or_none()
+        if not db_ticket:
+            raise HTTPException(status_code=404, detail="问题单不存在")
+        print(db_ticket.file_id)
+        if db_ticket.file_id:
+            await async_delete_rag_document(db, file_id=db_ticket.file_id, f_type="ticket")
+        else:
+            await db.delete(db_ticket)
+            await db.commit()
+
         return {"message": "问题单删除成功"}
     except HTTPException as e:
         logger.error(f"删除问题单失败 - HTTP异常: {str(e)}")

@@ -9,7 +9,7 @@ from app.db_services.database import get_db
 from app.logger import get_logger
 from app.models.rag import Question, Documents
 from app.schemas.rag_schema import QuestionCreate, QuestionRead, QuestionUpdate
-from app.services.baiLian_service import process_full_rag_upload
+from app.services.baiLian_service import process_full_rag_upload, async_delete_rag_document
 
 router = APIRouter()
 logger = get_logger('rag_router')
@@ -59,7 +59,9 @@ async def update_question(
     question.answers = data.answers
     question.status = 0  # 修改过后 处理状态恢复为 0，等待定时任务上传后标记为已处理
 
-    # todo：调用大模型删除对应文档
+    # 调用大模型接口删除对应文档
+    if question.file_id:
+        await async_delete_rag_document(db, file_id=question.file_id, f_type="question")
     # 根据修改后的内容重新提交大模型
     row_data = question.model_dump()
     content = '\n'.join(f'{key}: {value}' for key, value in row_data.items())
@@ -80,18 +82,21 @@ async def update_question(
 
     return question
 
-# 软删除问题
+# 删除问题
 @router.delete("/questions/{question_id}")
 async def delete_question(question_id: int, db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(Question).where(Question.id == question_id, Question.is_delete == 0))
     question = result.scalar_one_or_none()
     if not question:
         raise HTTPException(status_code=404, detail="问题不存在")
-
-    question.is_delete = 1
-    question.updated_at = datetime.now(timezone.utc)
-    db.add(question)
-    await db.commit()
+    print(question.file_id)
+    if question.file_id:
+        await async_delete_rag_document(db, file_id=question.file_id, f_type="question")
+    else:
+        question.is_delete = 1
+        question.updated_at = datetime.now(timezone.utc)
+        db.add(question)
+        await db.commit()
     return {"message": f"问题 {question_id} 删除成功"}
 
 

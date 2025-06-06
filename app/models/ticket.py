@@ -46,6 +46,7 @@ class Ticket(SQLModel, table=True):
     handling_method: Optional[str] = Field(sa_type=Text, nullable=True)  # 处理方法，可选
     file_id: str = Field(max_length=200, nullable=True)  # 文档ID
     handler: str = Field(max_length=100)  # 故障处理人
+    status: int = Field(default=0)  # 处理状态
 
     create_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 

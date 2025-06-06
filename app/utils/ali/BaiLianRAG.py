@@ -259,6 +259,35 @@ class BaiLian:
             print(error.data.get("Recommend"))
             UtilClient.assert_as_string(error.message)
 
+
+    # 永久性删除指定的非结构化文档（未被知识库应用的）
+    def delete_rag_document(self, file_id):
+        runtime = util_models.RuntimeOptions()
+        headers = {}
+        try:
+            # 复制代码运行请自行打印 API 的返回值
+            res = self.client.delete_file_with_options(file_id, self.work_space, headers, runtime)
+        except Exception as error:
+            # 此处仅做打印展示，请谨慎对待异常处理，在工程项目中切勿直接忽略异常。
+            # 错误 message
+            print(error)
+
+
+    # 删除知识库索引文档
+    def delete_rag_index(self, file_id):
+        delete_request = bailian_20231229_models.DeleteIndexDocumentRequest(index_id=self.IndexId,
+                                                                            document_ids=[file_id])
+        runtime = util_models.RuntimeOptions()
+        headers = {}
+        try:
+            # 复制代码运行请自行打印 API 的返回值
+            res = self.client.delete_index_document_with_options(self.work_space, delete_request, headers, runtime)
+            print(res)
+            print("-=----------------------------------")
+        except Exception as error:
+            print(error)
+
+
     @staticmethod
     def chat(issue_str):
         response = Application.call(
