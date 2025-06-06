@@ -315,6 +315,7 @@ async def get_my_tickets(
                 "handling_method": ticket.handling_method,
                 "handler": ticket.handler,
                 "user_id": ticket.user_id,
+                "status": ticket.status,
                 "create_at": ticket.create_at,
                 "attachments": attachments_map.get(ticket.id, [])
             }

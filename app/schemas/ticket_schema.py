@@ -65,6 +65,7 @@ class TicketResponse(SQLModel):
     handling_method: Optional[str] = Field(None, description="处理方法")
     handler: Optional[str] = Field(None, description="故障处理人")
     user_id: Optional[int] = Field(None, description="创建用户ID")
+    status: Optional[int] = Field(0, description="工单处理状态")
     create_at: Optional[datetime] = Field(None, description="创建时间")
     attachments: List[AttachmentResponse] = Field(default=[], description="附件列表")
 
