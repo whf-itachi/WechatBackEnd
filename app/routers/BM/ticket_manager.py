@@ -510,3 +510,27 @@ def preview_file(file_path: str):
 
     return FileResponse(target_path)
 
+
+@router.get("/attachment/{attachment_id}/preview")
+async def preview_attachment(attachment_id: int, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(
+        select(Attachment).where(Attachment.id == attachment_id)
+    )
+    attachment = result.scalars().first()
+
+    if not attachment:
+        raise HTTPException(status_code=404, detail="附件不存在")
+
+    file_path = attachment.file_path
+
+    if not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail="文件不存在")
+
+    file_name = os.path.basename(file_path)
+
+    return FileResponse(
+        path=file_path,
+        filename=file_name,
+        media_type=attachment.file_type or "application/octet-stream",
+        headers={"Content-Disposition": f"inline; filename={file_name}"}
+    )
