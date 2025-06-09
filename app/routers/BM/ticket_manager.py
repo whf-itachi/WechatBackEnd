@@ -83,7 +83,7 @@ async def create_ticket_json(
 @router.get("/list")
 async def get_tickets(
         page: int = 1,
-        pageSize: int = 10,
+        page_size: int = 10,
         device_model: str= "",
         creator: str= "",
         db: AsyncSession = Depends(get_db),
@@ -112,7 +112,7 @@ async def get_tickets(
         total_count = len(total_count_result.scalars().all())
 
         # 查询分页工单
-        query = query.offset((page - 1) * pageSize).limit(pageSize)
+        query = query.offset((page - 1) * page_size).limit(page_size)
         result = await db.execute(query)
         tickets = result.scalars().all()
 
@@ -215,6 +215,7 @@ async def get_ticket(
             "handling_method": ticket.handling_method,
             "handler": ticket.handler,
             "user_id": ticket.user_id,
+            "status": ticket.status,
             "create_at": ticket.create_at,
             "attachments": ticket_attachments
         }
@@ -383,6 +384,7 @@ async def update_ticket(
         try:
             await db.commit()
         except Exception as e:
+            logger.error(f"修改工单报错：{e}")
             await db.rollback()
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
