@@ -17,6 +17,7 @@ from app.models.ticket import Ticket, Attachment, TicketAttachmentLink
 from sqlalchemy import select
 import json
 
+from app.services.ticket_service import delete_attachment_by_id, delete_ticket_service
 from app.services.user_service import get_user_by_id
 from app.utils.ali.BaiLianRAG import BaiLian
 
@@ -298,37 +299,8 @@ async def update_ticket(
 
         # 处理需要删除的附件
         if delete_list_ids:
-            logger.info(f"需要删除的附件ID列表: {delete_list_ids}")
-            # 查询需要删除的附件关联
-            stmt = select(TicketAttachmentLink).where(
-                TicketAttachmentLink.ticket_id == ticket_id,
-                TicketAttachmentLink.attachment_id.in_(delete_list_ids)
-            )
-            result = await db.execute(stmt)
-            delete_links = result.scalars().all()
-
-            if delete_links:
-                # 获取需要删除的附件ID
-                delete_attachment_ids = [link.attachment_id for link in delete_links]
-
-                # 查询需要删除的附件
-                stmt = select(Attachment).where(Attachment.id.in_(delete_attachment_ids))
-                result = await db.execute(stmt)
-                delete_attachments = result.scalars().all()
-
-                # 删除附件文件
-                for attachment in delete_attachments:
-                    try:
-                        if os.path.exists(attachment.file_path):
-                            os.remove(attachment.file_path)
-                    except Exception as e:
-                        logger.error(f"删除附件文件失败: {str(e)}")
-
-                # 删除附件关联和附件记录
-                for link in delete_links:
-                    await db.delete(link)
-                for attachment in delete_attachments:
-                    await db.delete(attachment)
+            for attachment_id in delete_list_ids:
+                await delete_attachment_by_id(db, attachment_id)
 
         # 处理新上传的附件
         if attachments:
@@ -478,17 +450,13 @@ async def delete_ticket(
     current_user = await get_user_by_id(db, token_payload.get("user_id"))
     logger.info(f"收到删除工单请求，工单ID: {ticket_id}，当前用户: {current_user.id}")
     try:
-        result = await db.execute(select(Ticket).where(Ticket.id == ticket_id))
-        db_ticket = result.scalar_one_or_none()
-        if not db_ticket:
-            raise HTTPException(status_code=404, detail="工单不存在")
-        print(db_ticket.file_id)
-        if db_ticket.file_id:
-            await async_delete_rag_document(db, file_id=db_ticket.file_id, f_type="ticket")
-        else:
-            await db.delete(db_ticket)
-            await db.commit()
-
+        result = await delete_ticket_service(db, ticket_id)
+        logger.info(f"成功删除工单，工单ID: {ticket_id}")
+        if not result:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="未找到该工单"
+            )
         return {"message": "工单删除成功"}
     except HTTPException as e:
         logger.error(f"删除工单失败 - HTTP异常: {str(e)}")

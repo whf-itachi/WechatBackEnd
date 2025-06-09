@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import SQLAlchemyError
 from app.db_services.database import get_db
 from app.services.baiLian_service import process_full_rag_upload
-from app.services.ticket_service import delete_ticket_service
+from app.services.ticket_service import delete_ticket_service, delete_attachment_by_id
 from app.schemas.ticket_schema import TicketResponse
 from app.dependencies.auth import get_current_user
 from app.models.user import User
@@ -338,7 +338,6 @@ async def get_my_tickets(
         )
 
 
-
 # 对所有字段进行全量字符串查询
 @router.get("/search", response_model=List[TicketResponse])
 async def search_all_fields(
@@ -587,37 +586,8 @@ async def update_ticket(
 
         # 处理需要删除的附件
         if delete_list_ids:
-            logger.info(f"需要删除的附件ID列表: {delete_list_ids}")
-            # 查询需要删除的附件关联
-            stmt = select(TicketAttachmentLink).where(
-                TicketAttachmentLink.ticket_id == ticket_id,
-                TicketAttachmentLink.attachment_id.in_(delete_list_ids)
-            )
-            result = await db.execute(stmt)
-            delete_links = result.scalars().all()
-            
-            if delete_links:
-                # 获取需要删除的附件ID
-                delete_attachment_ids = [link.attachment_id for link in delete_links]
-                
-                # 查询需要删除的附件
-                stmt = select(Attachment).where(Attachment.id.in_(delete_attachment_ids))
-                result = await db.execute(stmt)
-                delete_attachments = result.scalars().all()
-                
-                # 删除附件文件
-                for attachment in delete_attachments:
-                    try:
-                        if os.path.exists(attachment.file_path):
-                            os.remove(attachment.file_path)
-                    except Exception as e:
-                        logger.error(f"删除附件文件失败: {str(e)}")
-                
-                # 删除附件关联和附件记录
-                for link in delete_links:
-                    await db.delete(link)
-                for attachment in delete_attachments:
-                    await db.delete(attachment)
+            for attachment_id in delete_list_ids:
+                await delete_attachment_by_id(db, attachment_id)
 
         # 处理新上传的附件
         if attachments:
@@ -635,7 +605,9 @@ async def update_ticket(
                     )
 
             # 确保上传目录存在
-            upload_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "files")
+            upload_dir = settings.ATTACHMENT_PATH  # 使用配置文件確定存儲地址
+            # 确保上传目录存在
+            # upload_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "files")
             if not os.path.exists(upload_dir):
                 os.makedirs(upload_dir)
 
@@ -648,8 +620,8 @@ async def update_ticket(
                 file_path = os.path.join(upload_dir, new_filename)
                 try:
                     contents = await attachment.read()
-                    with open(file_path, "wb") as buffer:
-                        buffer.write(contents)
+                    async with aiofiles.open(file_path, 'wb') as f:
+                        await f.write(contents)
                 except Exception as e:
                     logger.error(f"文件保存失败: {str(e)}")
                     raise HTTPException(
