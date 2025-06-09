@@ -1,7 +1,7 @@
-import io
+from werkzeug.utils import secure_filename
+import aiofiles
 
 from fastapi import BackgroundTasks
-
 from fastapi import APIRouter, HTTPException, Depends, status, UploadFile, File, Form, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import SQLAlchemyError
@@ -20,6 +20,7 @@ from sqlalchemy import select, cast, String, or_
 import json
 
 from app.utils.ali.BaiLianRAG import BaiLian
+from app.config import settings
 
 router = APIRouter()
 logger = get_logger('ticket_router')
@@ -81,15 +82,17 @@ async def create_ticket(
 
         # 处理文件上传
         if attachments:
+            upload_dir = settings.ATTACHMENT_PATH  # 使用配置文件確定存儲地址
             # 确保上传目录存在
-            upload_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "files")
+            # upload_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "files")
             if not os.path.exists(upload_dir):
                 os.makedirs(upload_dir)
 
             for attachment in attachments:
+                filename = secure_filename(attachment.filename)  # 安全的获取文件名
                 # 生成文件名
                 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                new_filename = f"{timestamp}_{attachment.filename}"
+                new_filename = f"{timestamp}_{filename}"
                 
                 # 保存文件
                 file_path = os.path.join(upload_dir, new_filename)
@@ -97,8 +100,8 @@ async def create_ticket(
                     # 使用异步方式读取文件内容
                     contents = await attachment.read()
                     # 使用异步方式写入文件
-                    with open(file_path, "wb") as buffer:
-                        buffer.write(contents)
+                    async with aiofiles.open(file_path, 'wb') as f:
+                        await f.write(contents)
                 except Exception as e:
                     logger.error(f"文件保存失败: {str(e)}")
                     raise HTTPException(

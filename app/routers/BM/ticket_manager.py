@@ -1,6 +1,9 @@
 from fastapi import APIRouter, HTTPException, Depends, status, UploadFile, File, Form, Body, BackgroundTasks
 from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi.responses import FileResponse
+from werkzeug.utils import secure_filename
+
+from app.config import settings
 from app.db_services.database import get_db
 from app.dependencies.BM_auth import bm_verify_token
 from app.services.baiLian_service import async_delete_rag_document, process_full_rag_upload
@@ -343,14 +346,16 @@ async def update_ticket(
                     )
 
             # 确保上传目录存在
-            upload_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "files")
+            # upload_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "files")
+            upload_dir = settings.ATTACHMENT_PATH  # 使用配置文件確定存儲地址
             if not os.path.exists(upload_dir):
                 os.makedirs(upload_dir)
 
             for attachment in attachments:
+                filename = secure_filename(attachment.filename)  # 安全的获取文件名
                 # 生成文件名
                 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                new_filename = f"{timestamp}_{attachment.filename}"
+                new_filename = f"{timestamp}_{filename}"
 
                 # 保存文件
                 file_path = os.path.join(upload_dir, new_filename)

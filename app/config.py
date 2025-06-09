@@ -20,6 +20,9 @@ class Settings(BaseSettings):
     # 阿里百炼秘钥
     ALI_ACCESS_KEY_ID: str
     ALI_ACCESS_KEY_SECRET: str
+
+    # 附件保存地址
+    ATTACHMENT_PATH: str
     
     @property
     def DB_ASYNC_URL(self) -> str:
