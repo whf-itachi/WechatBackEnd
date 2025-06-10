@@ -405,7 +405,7 @@ async def update_ticket(
 
         dict_data = {
             "id": ticket.id,
-            "f_type": "question",
+            "f_type": "ticket",
             "file_name": f"ticket_{ticket.id}.txt"
         }
 
