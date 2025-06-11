@@ -10,13 +10,15 @@ from app.models.survey import (
     SurveyOption as OptionModel,
     SurveyResponse as ResponseModel,
     SurveyAnswer as AnswerModel,
+    SurveyAnswerChoice as AnswerChoiceModel
 )
 from app.schemas.survey_schema import (
     SurveyCreate,
     SurveyUpdate,
     SurveyOut,
     SurveyWithQuestions,
-    ResponseSubmit
+    ResponseSubmit,
+    AnswerSubmit
 )
 
 router = APIRouter()
@@ -37,29 +39,90 @@ async def list_surveys(
     surveys = result.scalars().all()
 
     survey_list = []
-    for s in surveys:
+    for survey in surveys:
+        # 获取问卷的响应数量
         count_result = await db.execute(
-            select(ResponseModel).where(ResponseModel.survey_id == s.id)
+            select(ResponseModel).where(ResponseModel.survey_id == survey.id)
         )
-        # 使用 dict 或者 dict-like 对象来构造 SurveyOut
-        survey_dict = s.__dict__
-        survey_dict["participant_count"] = len(count_result.scalars().all())
-        survey_list.append(SurveyOut(**survey_dict))
+        response_count = len(count_result.scalars().all())
+        
+        # 构造返回数据
+        survey_data = {
+            "id": survey.id,
+            "title": survey.title,
+            "description": survey.description,
+            "is_active": survey.is_active,
+            "current_responses": response_count,
+            "created_at": survey.created_at,
+            "updated_at": survey.updated_at
+        }
+        survey_list.append(SurveyOut(**survey_data))
 
     return survey_list
 
 
 # ———————————————— 创建问卷 ————————————————
-@router.post("/", status_code=200)
+@router.post("/", response_model=SurveyOut)
 async def create_survey(
     survey_data: SurveyCreate,
     db: AsyncSession = Depends(get_db)
 ):
-    survey = SurveyModel(**survey_data.model_dump())
-    db.add(survey)
-    await db.commit()
-    await db.refresh(survey)
-    return {"message": "创建成功", "survey": survey.id}
+    """创建问卷，包括问题和选项"""
+    try:
+        # 1. 创建问卷基本信息
+        survey = SurveyModel(
+            title=survey_data.title,
+            description=survey_data.description,
+            is_active=True,
+            current_responses=0
+        )
+        db.add(survey)
+        await db.flush()  # 获取 survey.id
+
+        # 2. 创建问题和选项
+        for question_data in survey_data.questions:
+            # 创建问题
+            question = QuestionModel(
+                survey_id=survey.id,
+                text=question_data.text,
+                type=question_data.type,
+                required=question_data.required,
+                order=question_data.order
+            )
+            db.add(question)
+            await db.flush()  # 获取 question.id
+
+            # 如果是选择题，创建选项
+            if question_data.type in ['single_choice', 'multiple_choice'] and question_data.options:
+                for option_data in question_data.options:
+                    option = OptionModel(
+                        question_id=question.id,
+                        value=option_data.value,
+                        order=option_data.order
+                    )
+                    db.add(option)
+
+        await db.commit()
+        await db.refresh(survey)
+
+        # 构造返回数据
+        survey_data = {
+            "id": survey.id,
+            "title": survey.title,
+            "description": survey.description,
+            "is_active": survey.is_active,
+            "current_responses": survey.current_responses,
+            "created_at": survey.created_at,
+            "updated_at": survey.updated_at
+        }
+        return SurveyOut(**survey_data)
+
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"创建问卷失败: {str(e)}"
+        )
 
 
 # ———————————————— 获取单个问卷详情（含问题和选项） ————————————————
@@ -143,12 +206,28 @@ async def submit_response(
 
     # 保存每道题的答案
     for ans in data.answers:
+        # 创建答案记录
         answer = AnswerModel(
             response_id=response.id,
             question_id=ans.question_id,
-            answer_text=ans.answer_text
+            answer_text=ans.answer_text,
+            answer_rating=ans.answer_rating
         )
         db.add(answer)
+        await db.flush()  # 获取 answer.id
+
+        # 如果是选择题，创建选项关联
+        if ans.selected_option_ids:
+            for order, option_id in enumerate(ans.selected_option_ids):
+                choice = AnswerChoiceModel(
+                    answer_id=answer.id,
+                    option_id=option_id,
+                    order=order
+                )
+                db.add(choice)
+
+    # 更新问卷响应数
+    survey.current_responses += 1
 
     await db.commit()
     return {"message": "提交成功"}

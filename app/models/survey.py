@@ -1,68 +1,133 @@
 from datetime import datetime
-from typing import Optional
-from sqlmodel import SQLModel, Field
-from sqlalchemy import func, Column, DateTime
+from typing import Optional, List
+
+from sqlmodel import SQLModel, Field, Relationship
+from sqlalchemy import Column, DateTime, func
 
 
 # ————————————————————————
-# 问卷相关模型
+# 1. 问卷主表 (Survey)
 # ————————————————————————
 
 class SurveyTable(SQLModel, table=True):
-    """问卷表"""
-    __tablename__ = "survey_table"
+    __tablename__ = "surveys"
 
     id: Optional[int] = Field(default=None, primary_key=True)
     title: str = Field(max_length=255)
     description: Optional[str] = Field(default=None)
     is_active: bool = Field(default=True)
+    current_responses: int = Field(default=0)
 
     created_at: datetime = Field(sa_column=Column(DateTime, server_default=func.now()))
     updated_at: datetime = Field(sa_column=Column(DateTime, server_default=func.now(), onupdate=func.now()))
 
+    questions: List["SurveyQuestion"] = Relationship(
+        back_populates="survey",
+        sa_relationship_kwargs={"cascade": "all, delete-orphan"}
+    )
+    responses: List["SurveyResponse"] = Relationship(
+        back_populates="survey",
+        sa_relationship_kwargs={"cascade": "all, delete-orphan"}
+    )
+
+
+# ————————————————————————
+# 2. 问题表 (Question)
+# ————————————————————————
 
 class SurveyQuestion(SQLModel, table=True):
-    """问题表"""
-    __tablename__ = "survey_question"
+    __tablename__ = "survey_questions"
 
     id: Optional[int] = Field(default=None, primary_key=True)
-    survey_id: int = Field(foreign_key="survey_table.id")  # 关联到问卷表
-    order: int = Field(default=0)  # 在问卷表中的顺序
+    survey_id: int = Field(foreign_key="surveys.id")
+    order: int = Field(default=0)
+    text: str
+    type: str = Field(max_length=50)  # single_choice, multiple_choice, rating, text
+    required: bool = Field(default=False)
 
-    text: str  # 问题内容
-    type: str = Field(max_length=50)  # 问题类型: single_choice, multiple_choice, rating, text
-    required: bool = Field(default=False)  # 是否必填
     created_at: datetime = Field(sa_column=Column(DateTime, server_default=func.now()))
-    updated_at: datetime = Field(sa_column=Column(DateTime, server_default=func.now(), onupdate=func.now()))
 
+    survey: "SurveyTable" = Relationship(back_populates="questions")
+    options: List["SurveyOption"] = Relationship(
+        back_populates="question",
+        sa_relationship_kwargs={"cascade": "all, delete-orphan"}
+    )
+    answers: List["SurveyAnswer"] = Relationship(
+        back_populates="question",
+        sa_relationship_kwargs={"cascade": "all, delete-orphan"}
+    )
+
+
+# ————————————————————————
+# 3. 选项表 (Option)
+# ————————————————————————
 
 class SurveyOption(SQLModel, table=True):
-    """选项表"""
-    __tablename__ = "survey_option"
+    __tablename__ = "survey_options"
 
     id: Optional[int] = Field(default=None, primary_key=True)
-    question_id: int = Field(foreign_key="survey_question.id")  # 关联问题表id
-    value: str = Field(max_length=255)  # 选项内容
-    order: int = Field(default=0)  # 显示顺序
+    question_id: int = Field(foreign_key="survey_questions.id")
+    value: str = Field(max_length=255)
+    order: int = Field(default=0)
+
     created_at: datetime = Field(sa_column=Column(DateTime, server_default=func.now()))
 
+    question: "SurveyQuestion" = Relationship(back_populates="options")
+    answer_choices: List["SurveyAnswerChoice"] = Relationship(back_populates="option")
+
+
+# ————————————————————————
+# 4. 回答记录表 (Response)
+# ————————————————————————
 
 class SurveyResponse(SQLModel, table=True):
-    """问卷提交记录表"""
-    __tablename__ = "survey_response"
+    __tablename__ = "survey_responses"
 
     id: Optional[int] = Field(default=None, primary_key=True)
-    survey_id: int = Field(foreign_key="survey_table.id")  # 哪张问卷
-    user_name: Optional[str] = Field(nullable=True)  # 谁提交的
+    survey_id: int = Field(foreign_key="surveys.id")
+    user_name: Optional[str] = Field(default=None)
     submitted_at: datetime = Field(sa_column=Column(DateTime, server_default=func.now()))
 
+    survey: "SurveyTable" = Relationship(back_populates="responses")
+    answers: List["SurveyAnswer"] = Relationship(
+        back_populates="response",
+        sa_relationship_kwargs={"cascade": "all, delete-orphan"}
+    )
+
+
+# ————————————————————————
+# 5. 答案表 (Answer)
+# ————————————————————————
 
 class SurveyAnswer(SQLModel, table=True):
-    """答题记录表"""
-    __tablename__ = "survey_answer"
+    __tablename__ = "survey_answers"
 
     id: Optional[int] = Field(default=None, primary_key=True)
-    response_id: int = Field(foreign_key="survey_response.id")  # 谁回答的
-    question_id: int = Field(foreign_key="survey_question.id")  # 哪个问题
-    answer_text: str  # 回答内容
+    response_id: int = Field(foreign_key="survey_responses.id")
+    question_id: int = Field(foreign_key="survey_questions.id")
+
+    answer_text: Optional[str] = None
+    answer_rating: Optional[int] = None
     submitted_at: datetime = Field(sa_column=Column(DateTime, server_default=func.now()))
+
+    response: "SurveyResponse" = Relationship(back_populates="answers")
+    question: "SurveyQuestion" = Relationship(back_populates="answers")
+    selected_options: List["SurveyAnswerChoice"] = Relationship(
+        back_populates="answer",
+        sa_relationship_kwargs={"cascade": "all, delete-orphan"}
+    )
+
+
+# ————————————————————————
+# 6. 多选答案关联表 (AnswerChoice)
+# ————————————————————————
+
+class SurveyAnswerChoice(SQLModel, table=True):
+    __tablename__ = "survey_answer_choices"
+
+    answer_id: int = Field(foreign_key="survey_answers.id", primary_key=True)
+    option_id: int = Field(foreign_key="survey_options.id", primary_key=True)
+    order: int = Field(default=0)
+
+    answer: "SurveyAnswer" = Relationship(back_populates="selected_options")
+    option: "SurveyOption" = Relationship(back_populates="answer_choices")
