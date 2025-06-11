@@ -3,8 +3,6 @@ from typing import Optional, List
 from pydantic import BaseModel, Field
 
 
-# ———————— 问卷 ————————
-
 class SurveyBase(BaseModel):
     title: str = Field(..., max_length=255)
     description: Optional[str] = None
@@ -49,20 +47,11 @@ class SurveyOut(BaseModel):
         from_attributes = True
 
 
-# ———————— 问题 ————————
-
 class QuestionBase(BaseModel):
     text: str
     type: str
     required: bool = False
     order: int = 0
-
-
-class QuestionUpdate(QuestionBase):
-    text: Optional[str] = None
-    type: Optional[str] = None
-    required: Optional[bool] = None
-    order: Optional[int] = None
 
 
 class OptionOut(BaseModel):
@@ -82,13 +71,9 @@ class QuestionOut(QuestionBase):
         from_attributes = True
 
 
-# ———————— 问卷完整结构 ————————
-
 class SurveyWithQuestions(SurveyOut):
     questions: List[QuestionOut]
 
-
-# ———————— 提交答题 ————————
 
 class AnswerSubmit(BaseModel):
     question_id: int
@@ -99,3 +84,29 @@ class AnswerSubmit(BaseModel):
 
 class ResponseSubmit(BaseModel):
     answers: List[AnswerSubmit]
+
+
+class SurveyResponseSummary(BaseModel):
+    id: int
+    user_name: Optional[str]
+    submitted_at: datetime
+    survey_title: str
+
+    class Config:
+        orm_mode = True
+
+class AnswerOutFull(BaseModel):
+    question_id: int
+    question_text: str
+    question_type: str
+    required: bool
+    answer_text: Optional[str] = None
+    answer_rating: Optional[int] = None
+    selected_option_values: Optional[List[str]] = None
+
+class ResponseDetailOut(BaseModel):
+    id: int
+    user_name: Optional[str]
+    submitted_at: datetime
+    survey_title: str
+    answers: List[AnswerOutFull]

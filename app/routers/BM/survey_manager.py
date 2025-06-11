@@ -5,6 +5,8 @@ from typing import List
 import csv
 from io import StringIO
 
+from sqlalchemy.orm import joinedload, selectinload
+
 from app.db_services.database import get_db
 from app.models.survey import (
     SurveyTable as SurveyModel,
@@ -19,10 +21,76 @@ from app.schemas.survey_schema import (
     SurveyUpdate,
     SurveyOut,
     SurveyWithQuestions,
-    ResponseSubmit
+    ResponseSubmit, SurveyResponseSummary, AnswerOutFull, ResponseDetailOut
 )
 
 router = APIRouter()
+
+
+@router.get("/responses", response_model=List[SurveyResponseSummary])
+async def list_all_survey_responses(db: AsyncSession = Depends(get_db)):
+    result = await db.execute(
+        select(ResponseModel)
+        .options(selectinload(ResponseModel.survey))
+        .order_by(ResponseModel.id.desc())
+    )
+    responses = result.scalars().all()
+
+    return [
+        SurveyResponseSummary(
+            id=r.id,
+            user_name=r.user_name,
+            submitted_at=r.submitted_at,
+            survey_title=r.survey.title if r.survey else ""
+        )
+        for r in responses
+    ]
+
+
+# 获取具体问卷回答详情
+@router.get("/responses/{response_id}", response_model=ResponseDetailOut)
+async def get_response_detail(response_id: int, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(
+        select(ResponseModel)
+        .where(ResponseModel.id == response_id)
+        .options(
+            joinedload(ResponseModel.survey),
+            joinedload(ResponseModel.answers)
+            .joinedload(AnswerModel.selected_options)
+            .joinedload(AnswerChoiceModel.option),
+            joinedload(ResponseModel.answers)
+            .joinedload(AnswerModel.question)
+        )
+    )
+    r = result.unique().scalar_one_or_none()
+
+    if not r:
+        raise HTTPException(status_code=404, detail="提交记录不存在")
+
+    answers_out = []
+    for a in r.answers:
+        q = a.question
+        answers_out.append(AnswerOutFull(
+            question_id=q.id,
+            question_text=q.text,
+            question_type=q.type,
+            required=q.required,
+            answer_text=a.answer_text,
+            answer_rating=a.answer_rating,
+            selected_option_values=[
+                c.option.value for c in a.selected_options if c.option
+            ] if a.selected_options else None
+        ))
+
+    return ResponseDetailOut(
+        id=r.id,
+        user_name=r.user_name,
+        submitted_at=r.submitted_at,
+        survey_title=r.survey.title if r.survey else "",
+        answers=answers_out
+    )
+
+
 
 
 # ———————————————— 获取所有问卷（带分页、过滤） ————————————————
