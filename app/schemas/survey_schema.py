@@ -50,7 +50,7 @@ class SurveyOut(BaseModel):
 class QuestionBase(BaseModel):
     text: str
     type: str
-    required: bool = False
+    required: bool = True
     order: int = 0
 
 
