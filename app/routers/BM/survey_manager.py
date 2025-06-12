@@ -1,12 +1,13 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Request
+from fastapi.responses import StreamingResponse
 from sqlalchemy import select, func, delete
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import joinedload, selectinload
 from typing import List
 import csv
 from io import StringIO
-
-from sqlalchemy.orm import joinedload, selectinload
-
+import qrcode
+from io import BytesIO
 from app.db_services.database import get_db
 from app.models.survey import (
     SurveyTable as SurveyModel,
@@ -391,14 +392,14 @@ async def submit_response(
 
 
 # ———————————————— 生成问卷二维码 ————————————————
-import qrcode
-from io import BytesIO
-from fastapi.responses import StreamingResponse
-
 @router.get("/{survey_id}/qr")
-async def generate_qr(survey_id: int):
-    base_url = "https://yourdomain.com/survey/fill"
-    url = f"{base_url}?survey_id={survey_id}"
+async def generate_qr(request: Request, survey_id: int):
+    # 从请求对象中获取基础 URL
+    base_url = str(request.base_url)
+    if "8000" in base_url:
+        base_url = "http://localhost:5173/"
+    # 构建完整的调查链接
+    url = f"{base_url}survey/fill/{survey_id}"
 
     qr = qrcode.QRCode(version=1, box_size=10, border=4)
     qr.add_data(url)
