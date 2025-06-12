@@ -87,6 +87,8 @@ async def get_response_detail(response_id: int, db: AsyncSession = Depends(get_d
     return ResponseDetailOut(
         id=r.id,
         user_name=r.user_name,
+        company=r.company,
+        phone_number=r.phone_number,
         submitted_at=r.submitted_at,
         survey_title=r.survey.title if r.survey else "",
         answers=answers_out
@@ -422,8 +424,13 @@ async def submit_response(
     if not survey:
         raise HTTPException(status_code=404, detail="问卷不存在")
 
-    # 创建提交记录
-    response = ResponseModel(survey_id=survey_id)
+    # 创建提交记录，并写入用户信息
+    response = ResponseModel(
+        survey_id=survey_id,
+        user_name=data.user_name,
+        company=data.company,
+        phone_number=data.phone_number
+    )
     db.add(response)
     await db.flush()  # 获取 response.id
 

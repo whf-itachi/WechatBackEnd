@@ -82,6 +82,9 @@ class AnswerSubmit(BaseModel):
 
 
 class ResponseSubmit(BaseModel):
+    user_name: str
+    company: str
+    phone_number: str
     answers: List[AnswerSubmit]
 
 
@@ -106,6 +109,8 @@ class AnswerOutFull(BaseModel):
 class ResponseDetailOut(BaseModel):
     id: int
     user_name: Optional[str]
+    company: Optional[str]
+    phone_number: Optional[str]
     submitted_at: datetime
     survey_title: str
     answers: List[AnswerOutFull]

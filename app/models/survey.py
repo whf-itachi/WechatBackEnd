@@ -86,6 +86,9 @@ class SurveyResponse(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     survey_id: int = Field(foreign_key="surveys.id")
     user_name: Optional[str] = Field(default=None)
+    company: Optional[str] = Field(default=None)
+    phone_number: Optional[str] = Field(default=None)
+
     submitted_at: datetime = Field(sa_column=Column(DateTime, server_default=func.now()))
 
     survey: "SurveyTable" = Relationship(back_populates="responses")
