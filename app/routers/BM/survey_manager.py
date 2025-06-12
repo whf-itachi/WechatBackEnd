@@ -3,6 +3,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy import select, func, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload, selectinload
+
 from typing import List
 import csv
 from io import StringIO
@@ -15,14 +16,14 @@ from app.models.survey import (
     SurveyOption as OptionModel,
     SurveyResponse as ResponseModel,
     SurveyAnswer as AnswerModel,
-    SurveyAnswerChoice as AnswerChoiceModel
+    SurveyAnswerChoice as AnswerChoiceModel, SurveyTable, SurveyQuestion, SurveyAnswer, SurveyAnswerChoice, SurveyOption
 )
 from app.schemas.survey_schema import (
     SurveyCreate,
     SurveyUpdate,
     SurveyOut,
     SurveyWithQuestions,
-    ResponseSubmit, SurveyResponseSummary, AnswerOutFull, ResponseDetailOut
+    ResponseSubmit, SurveyResponseSummary, AnswerOutFull, ResponseDetailOut, SurveyStatisticsResponse
 )
 
 router = APIRouter()
@@ -93,6 +94,70 @@ async def get_response_detail(response_id: int, db: AsyncSession = Depends(get_d
 
 
 
+@router.get("/statistics/{survey_id}", response_model=SurveyStatisticsResponse)
+async def get_survey_statistics(survey_id: int, db: AsyncSession = Depends(get_db)):
+    # 查询问卷是否存在
+    survey_result = await db.execute(
+        select(SurveyTable).where(SurveyTable.id == survey_id)
+    )
+    survey = survey_result.scalars().first()
+    if not survey:
+        raise HTTPException(status_code=404, detail="问卷不存在")
+
+    # 查询所有问题 + 选项（注意使用 joinedload）
+    questions_result = await db.execute(
+        select(SurveyQuestion)
+        .where(SurveyQuestion.survey_id == survey_id)
+        .options(joinedload(SurveyQuestion.options))
+    )
+
+    questions = questions_result.unique().scalars().all()
+
+    stats = []
+
+    for q in questions:
+        if q.type == "rating":
+            avg_score = await db.scalar(
+                select(func.avg(SurveyAnswer.answer_rating))
+                .where(SurveyAnswer.question_id == q.id)
+                .where(SurveyAnswer.answer_rating.is_not(None))
+            )
+            stats.append({
+                "question_id": q.id,
+                "question_text": q.text,
+                "type": q.type,
+                "average_score": round(float(avg_score or 0), 2)
+            })
+
+        elif q.type in ["single_choice", "multiple_choice"]:
+            stmt = (
+                select(SurveyOption.value, func.count(SurveyAnswerChoice.option_id))
+                .join(SurveyAnswerChoice.option)
+                .where(SurveyAnswerChoice.answer.has(question_id=q.id))
+                .group_by(SurveyOption.value)
+            )
+
+            result = await db.execute(stmt)
+            raw_stats = result.all()
+
+            total = sum(count for _, count in raw_stats) if raw_stats else 1
+            formatted_options = [
+                {
+                    "option_value": value,
+                    "count": count,
+                    "percentage": round((count / total) * 100, 2)
+                }
+                for value, count in raw_stats
+            ]
+
+            stats.append({
+                "question_id": q.id,
+                "question_text": q.text,
+                "type": q.type,
+                "options_stat": formatted_options
+            })
+
+    return SurveyStatisticsResponse(root=stats)
 
 # ———————————————— 获取所有问卷（带分页、过滤） ————————————————
 @router.get("/", response_model=List[SurveyOut])
@@ -413,7 +478,6 @@ async def generate_qr(request: Request, survey_id: int):
 
 
 # ———————————————— 问卷统计 ————————————————
-
 @router.get("/{survey_id}/statistics")
 async def get_survey_statistics(
     survey_id: int,
@@ -497,7 +561,6 @@ async def get_survey_statistics(
 
 
 # ———————————————— 问卷数据导出 ————————————————
-
 @router.get("/{survey_id}/export")
 async def export_survey_data(
     survey_id: int,
@@ -573,3 +636,4 @@ async def export_survey_data(
             "Content-Disposition": f"attachment; filename=survey_{survey_id}_data.csv"
         }
     )
+

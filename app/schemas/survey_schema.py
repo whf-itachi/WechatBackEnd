@@ -1,7 +1,6 @@
 from datetime import datetime
-from typing import Optional, List
-from pydantic import BaseModel, Field
-
+from typing import Optional, List, Union
+from pydantic import BaseModel, Field, RootModel
 
 class SurveyBase(BaseModel):
     title: str = Field(..., max_length=255)
@@ -110,3 +109,25 @@ class ResponseDetailOut(BaseModel):
     submitted_at: datetime
     survey_title: str
     answers: List[AnswerOutFull]
+
+
+class RatingQuestionStat(BaseModel):
+    question_id: int
+    question_text: str
+    type: str
+    average_score: float
+
+class OptionStatItem(BaseModel):
+    option_value: str
+    count: int
+    percentage: float
+
+class ChoiceQuestionStat(BaseModel):
+    question_id: int
+    question_text: str
+    type: str
+    options_stat: List[OptionStatItem]
+
+
+class SurveyStatisticsResponse(RootModel):
+    root: List[Union[ChoiceQuestionStat, RatingQuestionStat]]
