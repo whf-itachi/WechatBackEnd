@@ -10,6 +10,7 @@ from io import StringIO
 import qrcode
 from io import BytesIO
 from app.db_services.database import get_db
+from app.logger import get_logger
 from app.models.survey import (
     SurveyTable as SurveyModel,
     SurveyQuestion as QuestionModel,
@@ -27,7 +28,7 @@ from app.schemas.survey_schema import (
 )
 
 router = APIRouter()
-
+logger = get_logger('Survey_router')
 
 @router.get("/responses", response_model=PaginatedResponse)
 async def list_all_survey_responses(
@@ -52,13 +53,17 @@ async def list_all_survey_responses(
 
     responses = result.scalars().all()
     total = count_result.scalar_one()
-
+    print(responses)
+    print(".................................................")
+    logger.info(responses)
+    logger.info("...........................................")
     items = [
         SurveyResponseSummary(
             id=r.id,
             user_name=r.user_name,
             submitted_at=r.submitted_at.strftime("%Y-%m-%d %H:%M:%S") if r.submitted_at else None,
-            survey_title=r.survey.title if r.survey else ""
+            survey_title=r.survey.title if r.survey else "",
+            survey_id=r.survey.id if r.survey else None
         )
         for r in responses
     ]

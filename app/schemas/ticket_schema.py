@@ -1,5 +1,7 @@
 from typing import Optional, List
 from datetime import datetime
+
+from pydantic import ConfigDict
 from sqlmodel import SQLModel, Field
 
 
@@ -22,8 +24,7 @@ class AttachmentResponse(SQLModel):
     upload_time: datetime = Field(..., description="上传时间")
     file_name: str = Field(..., description="文件名字")
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class TicketBase(SQLModel):
@@ -69,5 +70,4 @@ class TicketResponse(SQLModel):
     create_at: Optional[datetime] = Field(None, description="创建时间")
     attachments: List[AttachmentResponse] = Field(default=[], description="附件列表")
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)

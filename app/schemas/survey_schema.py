@@ -1,6 +1,7 @@
 from datetime import datetime
 from typing import Optional, List, Union
-from pydantic import BaseModel, Field, RootModel
+from pydantic import BaseModel, Field, RootModel, ConfigDict
+
 
 class SurveyBase(BaseModel):
     title: str = Field(..., max_length=255)
@@ -42,8 +43,7 @@ class SurveyOut(BaseModel):
     created_at: datetime
     updated_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class QuestionBase(BaseModel):
@@ -58,16 +58,14 @@ class OptionOut(BaseModel):
     value: str
     order: int
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class QuestionOut(QuestionBase):
     id: int
     options: List[OptionOut] = []
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class SurveyWithQuestions(SurveyOut):
@@ -93,9 +91,9 @@ class SurveyResponseSummary(BaseModel):
     user_name: Optional[str]
     submitted_at: datetime
     survey_title: str
+    survey_id: Optional[int]
 
-    class Config:
-        orm_mode = True
+    model_config = ConfigDict(from_attributes=True)
 
 class PaginatedResponse(BaseModel):
     items: List[SurveyResponseSummary]

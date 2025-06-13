@@ -1,6 +1,7 @@
 from sqlmodel import SQLModel, Field
 from typing import Optional
-from pydantic import EmailStr
+from pydantic import EmailStr, ConfigDict
+
 
 # 用户基础模型
 class UserBase(SQLModel):
@@ -52,5 +53,4 @@ class UserResponse(SQLModel):
     user: dict
     token: Optional[str] = Field(None, description="访问令牌")
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
