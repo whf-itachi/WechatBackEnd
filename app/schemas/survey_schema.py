@@ -97,6 +97,11 @@ class SurveyResponseSummary(BaseModel):
     class Config:
         orm_mode = True
 
+class PaginatedResponse(BaseModel):
+    items: List[SurveyResponseSummary]
+    total: int
+
+
 class AnswerOutFull(BaseModel):
     question_id: int
     question_text: str

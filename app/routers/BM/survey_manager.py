@@ -23,30 +23,50 @@ from app.schemas.survey_schema import (
     SurveyUpdate,
     SurveyOut,
     SurveyWithQuestions,
-    ResponseSubmit, SurveyResponseSummary, AnswerOutFull, ResponseDetailOut, SurveyStatisticsResponse
+    ResponseSubmit, SurveyResponseSummary, AnswerOutFull, ResponseDetailOut, SurveyStatisticsResponse, PaginatedResponse
 )
 
 router = APIRouter()
 
 
-@router.get("/responses", response_model=List[SurveyResponseSummary])
-async def list_all_survey_responses(db: AsyncSession = Depends(get_db)):
-    result = await db.execute(
+@router.get("/responses", response_model=PaginatedResponse)
+async def list_all_survey_responses(
+    skip: int = 0,
+    limit: int = 10,
+    db: AsyncSession = Depends(get_db)
+):
+    # 主查询（带分页）
+    stmt = (
         select(ResponseModel)
         .options(selectinload(ResponseModel.survey))
         .order_by(ResponseModel.id.desc())
+        .offset(skip)
+        .limit(limit)
     )
-    responses = result.scalars().all()
 
-    return [
+    # 总数查询
+    count_stmt = select(func.count()).select_from(ResponseModel)
+
+    result = await db.execute(stmt)
+    count_result = await db.execute(count_stmt)
+
+    responses = result.scalars().all()
+    total = count_result.scalar_one()
+
+    items = [
         SurveyResponseSummary(
             id=r.id,
             user_name=r.user_name,
-            submitted_at=r.submitted_at,
+            submitted_at=r.submitted_at.strftime("%Y-%m-%d %H:%M:%S") if r.submitted_at else None,
             survey_title=r.survey.title if r.survey else ""
         )
         for r in responses
     ]
+
+    return {
+        "items": items,
+        "total": total
+    }
 
 
 # 获取具体问卷回答详情
