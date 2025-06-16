@@ -1,6 +1,7 @@
 from sqlmodel import SQLModel, Field
 from typing import Optional
-from pydantic import EmailStr
+from pydantic import EmailStr, ConfigDict
+
 
 # 用户基础模型
 class UserBase(SQLModel):
@@ -31,6 +32,9 @@ class UserUpdate(SQLModel):
     password: Optional[str] = Field(None, description="密码")
     is_active: Optional[bool] = Field(None, description="是否激活")
 
+class UserTypeUpdate(SQLModel):
+    user_type: Optional[str] = Field(None, description="用户类型")
+
 # 用户登录模型
 class UserLogin(SQLModel):
     name: str = Field(..., description="用户名")
@@ -49,5 +53,4 @@ class UserResponse(SQLModel):
     user: dict
     token: Optional[str] = Field(None, description="访问令牌")
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)

@@ -1,6 +1,7 @@
 from sqlalchemy import select
 from passlib.context import CryptContext
 from datetime import timedelta
+import bcrypt
 
 from app.db_services.database import AsyncSessionDep
 from app.models.user import User
@@ -15,11 +16,21 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     """验证密码"""
-    return pwd_context.verify(plain_password, hashed_password)
+    try:
+        return bcrypt.checkpw(
+            plain_password.encode('utf-8'),
+            hashed_password.encode('utf-8')
+        )
+    except Exception:
+        # 如果 bcrypt 验证失败，尝试使用 passlib 验证
+        return pwd_context.verify(plain_password, hashed_password)
 
 def get_password_hash(password: str) -> str:
     """获取密码哈希值"""
-    return pwd_context.hash(password)
+    # 使用 bcrypt 生成盐并哈希密码
+    salt = bcrypt.gensalt()
+    hashed = bcrypt.hashpw(password.encode('utf-8'), salt)
+    return hashed.decode('utf-8')
 
 def validate_password(password: str) -> bool:
     """验证密码不为空"""
@@ -63,16 +74,14 @@ async def verify_user_login(session: AsyncSessionDep, login_data: UserLogin) -> 
         
     if not errors:
         result = await session.execute(select(User).where(User.name == login_data.name))
-        user = result.scalars().first()
-        
-        if not user:
+        user_info = result.scalars().first()
+        if not user_info:
             errors.append("用户不存在")
-        elif not verify_password(login_data.password, user.password):
+        elif not verify_password(login_data.password, user_info.password):
             errors.append("密码错误")
-        elif not user.is_active:
+        elif not user_info.is_active:
             errors.append("用户已被禁用")
-        
-    if errors:
+    else:
         raise HTTPException(
             status_code=401,
             detail={
@@ -84,10 +93,10 @@ async def verify_user_login(session: AsyncSessionDep, login_data: UserLogin) -> 
     # 生成访问令牌
     access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = create_access_token(
-        data={"sub": str(user.id)}, expires_delta=access_token_expires
+        data={"user_id": str(user_info.id), "user_type": str(user_info.user_type)}, expires_delta=access_token_expires
     )
     
-    return user, access_token
+    return user_info, access_token
 
 # 创建用户
 async def create_user_service(session: AsyncSessionDep, user_data: UserCreate) -> Tuple[User, str]:
@@ -127,8 +136,7 @@ async def create_user_service(session: AsyncSessionDep, user_data: UserCreate) -
             raise HTTPException(
                 status_code=400,
                 detail={
-                    "message": "注册失败",
-                    "errors": errors
+                    "message": "注册失败: " + str(errors)
                 }
             )
             
@@ -145,7 +153,8 @@ async def create_user_service(session: AsyncSessionDep, user_data: UserCreate) -
         # 生成访问令牌
         access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
         access_token = create_access_token(
-            data={"sub": str(new_user.id)}, expires_delta=access_token_expires
+            # 修正后代码（补充用户类型）
+            data={"user_id": str(new_user.id), "user_type": str(new_user.user_type)}, expires_delta=access_token_expires
         )
         
         return new_user, access_token

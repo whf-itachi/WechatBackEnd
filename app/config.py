@@ -1,6 +1,6 @@
 from pydantic_settings import BaseSettings
 from pathlib import Path
-import os
+
 
 # 获取项目根目录
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -16,6 +16,13 @@ class Settings(BaseSettings):
     # 数据库连接池配置
     POOL_SIZE: int = 5
     MAX_OVERFLOW: int = 10
+
+    # 阿里百炼秘钥
+    ALI_ACCESS_KEY_ID: str
+    ALI_ACCESS_KEY_SECRET: str
+
+    # 附件保存地址
+    ATTACHMENT_PATH: str
     
     @property
     def DB_ASYNC_URL(self) -> str:
@@ -27,7 +34,7 @@ class Settings(BaseSettings):
     # JWT配置
     JWT_SECRET_KEY: str
     JWT_ALGORITHM: str = "HS256"
-    JWT_ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
+    JWT_ACCESS_TOKEN_EXPIRE_MINUTES: int = 30  # 开发中，暂时设置30分钟过期
     
     class Config:
         env_file = str(BASE_DIR / ".env")
@@ -36,15 +43,7 @@ class Settings(BaseSettings):
         
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        # 打印配置信息（注意：生产环境中应该移除这些打印语句）
-        print(f"Loading settings from: {self.Config.env_file}")
-        print(f"Database URL: {self.DB_ASYNC_URL}")
-        print(f"Database Host: {self.DB_HOST}")
-        print(f"Database Port: {self.DB_PORT}")
-        print(f"Database Name: {self.DB_NAME}")
-        print(f"Database User: {self.DB_USER}")
-        print(f"JWT Secret Key: {self.JWT_SECRET_KEY}")
-        print(f"JWT Algorithm: {self.JWT_ALGORITHM}")
-        print(f"JWT Access Token Expire Minutes: {self.JWT_ACCESS_TOKEN_EXPIRE_MINUTES}")
 
+
+# pydantic_settings 会自动将 .env 文件中定义的变量赋值给 Settings 类的对应配置项，并进行类型检查和验证
 settings = Settings()

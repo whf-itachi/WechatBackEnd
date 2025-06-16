@@ -1,24 +1,39 @@
-from sqlalchemy import select
+import os
+
+import aiofiles
+from sqlalchemy import select, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi import HTTPException, status
+from sqlalchemy.orm import selectinload
 
-from app.models.ticket import Ticket
-from app.schemas.ticket_schema import TicketCreate, TicketUpdate
+from app.models.ticket import Ticket, TicketAttachmentLink, Attachment
+from app.schemas.ticket_schema import TicketUpdate
+
+from typing import List
+
+from app.utils.ali.BaiLianRAG import BaiLian
 
 
-async def create_ticket_service(session: AsyncSession, ticket_data: TicketCreate):
+async def create_ticket_service(session: AsyncSession, ticket_data: dict):
     """
     创建新的问题单
     
     Args:
         session: 数据库会话
-        ticket_data: 问题单数据
+        ticket_data: 问题单数据字典
         
     Returns:
         Ticket: 创建成功的问题单对象
     """
     try:
-        new_ticket = Ticket(**ticket_data.model_dump())
+        # 确保ticket_data中包含user_id
+        if 'user_id' not in ticket_data:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="创建工单失败: 缺少用户ID"
+            )
+            
+        new_ticket = Ticket(**ticket_data)
         session.add(new_ticket)
         await session.commit()
         await session.refresh(new_ticket)
@@ -43,7 +58,9 @@ async def get_tickets_service(session: AsyncSession):
         List[Ticket]: 问题单列表
     """
     try:
-        result = await session.execute(select(Ticket))
+        # 使用 select 语句查询工单，并预加载 attachments 关系
+        query = select(Ticket).options(selectinload(Ticket.attachments))
+        result = await session.execute(query)
         return result.scalars().all()
     except Exception as e:
         raise HTTPException(
@@ -64,7 +81,10 @@ async def get_ticket_service(session: AsyncSession, ticket_id: int):
         Optional[Ticket]: 问题单对象，如果不存在则返回None
     """
     try:
-        return await session.get(Ticket, ticket_id)
+        # 使用 select 语句查询工单，并预加载 attachments 关系
+        query = select(Ticket).options(selectinload(Ticket.attachments)).where(Ticket.id == ticket_id)
+        result = await session.execute(query)
+        return result.scalar_one_or_none()
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -103,25 +123,128 @@ async def update_ticket_service(session: AsyncSession, ticket_id: int, ticket_da
 
 async def delete_ticket_service(session: AsyncSession, ticket_id: int):
     """
-    删除问题单
-    
+    删除问题单及其关联的附件、中间表记录和物理文件
+
     Args:
         session: 数据库会话
         ticket_id: 问题单ID
-        
+
     Returns:
         bool: 删除成功返回True，如果问题单不存在则返回None
     """
     try:
+        # 1. 查询工单是否存在
         ticket = await session.get(Ticket, ticket_id)
         if not ticket:
             return None
+
+        # 2. 获取该工单关联的所有附件ID 和 路径
+        result = await session.execute(
+            select(TicketAttachmentLink.attachment_id).where(TicketAttachmentLink.ticket_id == ticket_id)
+        )
+        attachment_ids = [row[0] for row in result.all()]
+
+        file_paths = []
+        if attachment_ids:
+            result = await session.execute(
+                select(Attachment).where(Attachment.id.in_(attachment_ids))
+            )
+            attachments = result.scalars().all()
+            file_paths = [a.file_path for a in attachments]
+
+        # 3. 删除中间表记录
+        stmt = delete(TicketAttachmentLink).where(TicketAttachmentLink.ticket_id == ticket_id)
+        await session.execute(stmt)
+
+        # 4. 删除附件记录
+        if attachment_ids:
+            stmt = delete(Attachment).where(Attachment.id.in_(attachment_ids))
+            await session.execute(stmt)
+
+        # 5. 删除物理文件
+        for file_path in file_paths:
+            print("获取到文件路径为: ", file_path)
+            try:
+                if os.path.exists(file_path):
+                    os.remove(file_path)
+                    print(f"文件 {file_path} 删除成功")
+                else:
+                    print(f"文件 {file_path} 不存在")
+            except Exception as e:
+                print(f"删除文件 {file_path} 失败: {e}")
+
+        # 6. 删除工单
         await session.delete(ticket)
         await session.commit()
+
+        # 7. 删除大模型工单文档
+        if ticket.file_id:
+            bai_lian = BaiLian()
+            bai_lian.delete_rag_document(ticket.file_id)  # 删除文档
+            bai_lian.delete_rag_index(ticket.file_id)  # 删除知识库索引文档
+
         return True
+
     except Exception as e:
         await session.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"删除工单失败: {str(e)}"
+        )
+
+
+async def delete_attachment_by_id(session: AsyncSession, attachment_id: int):
+    """
+    根据附件ID删除附件及其关联数据
+
+    Args:
+        session: 异步数据库会话
+        attachment_id: 附件ID
+
+    Returns:
+        bool: 成功返回 True，如果附件不存在返回 None
+    """
+    try:
+        # 1. 查询附件是否存在
+        result = await session.execute(
+            select(Attachment).where(Attachment.id == attachment_id)
+        )
+        attachment = result.scalars().first()
+
+        if not attachment:
+            return None
+
+        file_path = attachment.file_path
+
+        # 2. 删除中间表记录（Ticket 和 Attachment 的关联）
+        stmt_link = delete(TicketAttachmentLink).where(
+            TicketAttachmentLink.attachment_id == attachment_id
+        )
+        await session.execute(stmt_link)
+
+        # 3. 删除附件数据库记录
+        stmt_attachment = delete(Attachment).where(Attachment.id == attachment_id)
+        await session.execute(stmt_attachment)
+
+        # 4. 删除物理文件
+        if os.path.exists(file_path):
+            try:
+                os.remove(file_path)
+                print(f"文件 {file_path} 删除成功")
+            except Exception as e:
+                print(f"删除文件 {file_path} 失败: {e}")
+                # 可选：记录日志或抛出异常
+        else:
+            print(f"文件 {file_path} 不存在")
+
+        # 提交事务
+        await session.commit()
+
+        return True
+
+    except Exception as e:
+        await session.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail=f"删除附件失败: {str(e)}"
         )
