@@ -1,38 +1,24 @@
-from werkzeug.utils import secure_filename
-import aiofiles
-
 from fastapi.responses import FileResponse
 from fastapi import BackgroundTasks
 from fastapi import APIRouter, HTTPException, Depends, status, UploadFile, File, Form, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.exc import SQLAlchemyError
 from app.db_services.database import get_db
 from app.services.baiLian_service import process_full_rag_upload
-from app.services.ticket_service import delete_ticket_service, delete_attachment_by_id
+from app.services.ticket_service import delete_ticket_service, delete_attachment_by_id, handle_attachment_files
 from app.schemas.ticket_schema import TicketResponse
 from app.dependencies.auth import get_current_user
 from app.models.user import User
 from typing import List, Optional
 from app.logger import get_logger
 import os
-from datetime import datetime
 from app.models.ticket import Ticket, Attachment, TicketAttachmentLink, DeviceModel, Customer
 from sqlalchemy import select, cast, String, or_
 import json
 
 from app.utils.ali.BaiLianRAG import BaiLian
-from app.config import settings
 
 router = APIRouter()
 logger = get_logger('ticket_router')
-
-# 文件上传配置
-ALLOWED_FILE_TYPES = {
-    'image/jpeg', 'image/png', 'application/pdf', 'video/mp4', 'video/quicktime',
-    'application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-    'application/vnd.ms-excel', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-}
-MAX_FILE_SIZE = 600 * 1024 * 1024  # 600MB
 
 
 # 创建工单
@@ -53,20 +39,6 @@ async def create_ticket(
     """创建工单"""
     logger.info(f"开始创建工单: {device_model}")
     try:
-        # 验证文件
-        if attachments:
-            for attachment in attachments:
-                if attachment.content_type not in ALLOWED_FILE_TYPES:
-                    raise HTTPException(
-                        status_code=status.HTTP_400_BAD_REQUEST,
-                        detail=f"不支持的文件类型: {attachment.content_type}"
-                    )
-                if attachment.size > MAX_FILE_SIZE:
-                    raise HTTPException(
-                        status_code=status.HTTP_400_BAD_REQUEST,
-                        detail=f"文件大小超过限制: {attachment.filename}"
-                    )
-
         # 创建工单
         ticket = Ticket(
             device_model=device_model,
@@ -81,55 +53,22 @@ async def create_ticket(
         db.add(ticket)
         await db.flush()
 
-        # 处理文件上传
         if attachments:
-            upload_dir = settings.ATTACHMENT_PATH  # 使用配置文件確定存儲地址
-            # 确保上传目录存在
-            # upload_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "files")
-            if not os.path.exists(upload_dir):
-                os.makedirs(upload_dir)
-
-            for attachment in attachments:
-                filename = secure_filename(attachment.filename)  # 安全的获取文件名
-                # 生成文件名
-                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                new_filename = f"{timestamp}_{filename}"
-                
-                # 保存文件
-                file_path = os.path.join(upload_dir, new_filename)
-                try:
-                    # 使用异步方式读取文件内容
-                    contents = await attachment.read()
-                    # 使用异步方式写入文件
-                    async with aiofiles.open(file_path, 'wb') as f:
-                        await f.write(contents)
-                except Exception as e:
-                    logger.error(f"文件保存失败: {str(e)}")
-                    raise HTTPException(
-                        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                        detail="文件保存失败"
-                    )
-                
-                # 创建附件记录
-                attachment_record = Attachment(
-                    file_path=file_path,
-                    file_type=attachment.content_type
+            try:
+                # 附件验证、存储、缩咯图生成
+                await handle_attachment_files(db, ticket.id, attachments)
+            except Exception as e:
+                logger.error(f"附件保存出错: {e}", exc_info=True)
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="附件上传失败"
                 )
-                db.add(attachment_record)
-                await db.flush()  # 获取 attachment_record.id
-
-                # 创建关联关系
-                link = TicketAttachmentLink(
-                    ticket_id=ticket.id,
-                    attachment_id=attachment_record.id
-                )
-                db.add(link)
         
         # 提交事务
         try:
             await db.commit()
         except Exception as e:
-            await db.rollback()
+            logger.error(f"提交事务报错: {e}")
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="数据库提交失败"
@@ -155,13 +94,6 @@ async def create_ticket(
         logger.error(f"工单创建失败 - HTTP异常: {str(e)}")
         await db.rollback()
         raise e
-    except SQLAlchemyError as e:
-        logger.error(f"工单创建失败 - 数据库异常: {str(e)}", exc_info=True)
-        await db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="数据库操作失败"
-        )
     except Exception as e:
         logger.error(f"工单创建失败 - 系统异常: {str(e)}", exc_info=True)
         await db.rollback()
@@ -297,13 +229,12 @@ async def get_my_tickets(
                     attachments_map[ticket_id] = []
 
                 # 从文件路径中提取文件名
-                file_name = os.path.basename(attachment.file_path)
                 attachments_map[ticket_id].append({
                     "id": attachment.id,
                     "file_path": attachment.file_path,
+                    "file_name": attachment.file_name,
                     "file_type": attachment.file_type,
-                    "upload_time": attachment.upload_time,
-                    "file_name": file_name
+                    "upload_time": attachment.upload_time
                 })
 
         # 构建响应
@@ -382,13 +313,12 @@ async def search_all_fields(
                     attachments_map[ticket_id] = []
 
                 # 从文件路径中提取文件名
-                file_name = os.path.basename(attachment.file_path)
                 attachments_map[ticket_id].append({
                     "id": attachment.id,
                     "file_path": attachment.file_path,
+                    "file_name": attachment.file_name,
                     "file_type": attachment.file_type,
-                    "upload_time": attachment.upload_time,
-                    "file_name": file_name
+                    "upload_time": attachment.upload_time
                 })
 
         # 构建响应
@@ -489,9 +419,10 @@ async def get_ticket(
             ticket_attachments.append({
                 "id": attachment.id,
                 "file_path": attachment.file_path,
+                "file_name": attachment.file_name,
                 "file_type": attachment.file_type,
-                "upload_time": attachment.upload_time,
-                "file_name": file_name
+                "upload_time": attachment.upload_time
+
             })
         
         # 构建响应
@@ -591,58 +522,15 @@ async def update_ticket(
 
         # 处理新上传的附件
         if attachments:
-            # 验证新上传的文件
-            for attachment in attachments:
-                if attachment.content_type not in ALLOWED_FILE_TYPES:
-                    raise HTTPException(
-                        status_code=status.HTTP_400_BAD_REQUEST,
-                        detail=f"不支持的文件类型: {attachment.content_type}"
-                    )
-                if attachment.size > MAX_FILE_SIZE:
-                    raise HTTPException(
-                        status_code=status.HTTP_400_BAD_REQUEST,
-                        detail=f"文件大小超过限制: {attachment.filename}"
-                    )
-
-            # 确保上传目录存在
-            upload_dir = settings.ATTACHMENT_PATH  # 使用配置文件確定存儲地址
-            # 确保上传目录存在
-            # upload_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "files")
-            if not os.path.exists(upload_dir):
-                os.makedirs(upload_dir)
-
-            for attachment in attachments:
-                # 生成文件名
-                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                new_filename = f"{timestamp}_{attachment.filename}"
-                
-                # 保存文件
-                file_path = os.path.join(upload_dir, new_filename)
-                try:
-                    contents = await attachment.read()
-                    async with aiofiles.open(file_path, 'wb') as f:
-                        await f.write(contents)
-                except Exception as e:
-                    logger.error(f"文件保存失败: {str(e)}")
-                    raise HTTPException(
-                        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                        detail="文件保存失败"
-                    )
-                
-                # 创建附件记录
-                attachment_record = Attachment(
-                    file_path=file_path,
-                    file_type=attachment.content_type
+            try:
+                # 附件验证、存储、缩咯图生成
+                await handle_attachment_files(db, ticket.id, attachments)
+            except Exception as e:
+                logger.error(f"附件保存出错: {e}", exc_info=True)
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="附件上传失败"
                 )
-                db.add(attachment_record)
-                await db.flush()  # 获取 attachment_record.id
-
-                # 创建关联关系
-                link = TicketAttachmentLink(
-                    ticket_id=ticket.id,
-                    attachment_id=attachment_record.id
-                )
-                db.add(link)
 
         # 提交事务
         try:
@@ -654,7 +542,6 @@ async def update_ticket(
                 detail="数据库提交失败"
             )
 
-        # 构建响应
         # 查询更新后的附件信息
         stmt = select(Attachment).join(
             TicketAttachmentLink,
@@ -664,16 +551,15 @@ async def update_ticket(
         result = await db.execute(stmt)
         attachments = result.scalars().all()
         
-        # 处理附件信息
+        # 构建返回附件信息
         ticket_attachments = []
         for attachment in attachments:
-            file_name = os.path.basename(attachment.file_path)
             ticket_attachments.append({
                 "id": attachment.id,
                 "file_path": attachment.file_path,
                 "file_type": attachment.file_type,
                 "upload_time": attachment.upload_time,
-                "file_name": file_name
+                "file_name": attachment.file_name
             })
 
         # 删除大模型文档
@@ -765,16 +651,14 @@ async def preview_attachment(attachment_id: int, db: AsyncSession = Depends(get_
     if not attachment:
         raise HTTPException(status_code=404, detail="附件不存在")
 
-    file_path = attachment.file_path
+    file_path = os.path.join(attachment.file_path, attachment.file_name)
 
     if not os.path.exists(file_path):
         raise HTTPException(status_code=404, detail="文件不存在")
 
-    file_name = os.path.basename(file_path)
-
     return FileResponse(
-        path=file_path,
-        filename=file_name,
+        path=attachment.file_path,
+        filename=attachment.file_name,
         media_type=attachment.file_type or "application/octet-stream",
-        headers={"Content-Disposition": f"inline; filename={file_name}"}
+        headers={"Content-Disposition": f"inline; filename={attachment.file_name}"}
     )

@@ -3,6 +3,7 @@ import asyncio
 import io
 
 import hashlib
+import json
 import time
 from http import HTTPStatus
 
@@ -153,12 +154,9 @@ class BaiLian:
         try:
             # 复制代码运行请自行打印 API 的返回值
             res = self.client.add_file_with_options(self.work_space, add_file_request, headers, runtime)
-            # print(res.body.data.__dir__())
             self.FileId = res.body.data.file_id
             print("添加文件返回：", self.FileId)
         except Exception as error:
-            # 此处仅做打印展示，请谨慎对待异常处理，在工程项目中切勿直接忽略异常。
-            # 错误 message
             print(error.message)
 
     async def describe_file(self):
@@ -178,12 +176,7 @@ class BaiLian:
                     break
                 print(res)
         except Exception as error:
-            # 此处仅做打印展示，请谨慎对待异常处理，在工程项目中切勿直接忽略异常。
-            # 错误 message
             print(error.message)
-            # 诊断地址
-            print(error.data.get("Recommend"))
-            UtilClient.assert_as_string(error.message)
 
     def submit_index_add_documents_job(self):
         """
@@ -202,12 +195,8 @@ class BaiLian:
                                                                           submit_index_add_documents_job_request,
                                                                           headers,
                                                                           runtime)
-            print("...", res)
         except Exception as error:
             print(error.message)
-            # 诊断地址
-            print(error.data.get("Recommend"))
-            UtilClient.assert_as_string(error.message)
 
     # 准备弃用，改为异步调用类替换该流程处理
     def upload_rag_document(self, f_name, r_data=None, f_type="ticket"):
@@ -252,12 +241,7 @@ class BaiLian:
                                                                 runtime)
             print("get the res is:", res)
         except Exception as error:
-            # 此处仅做打印展示，请谨慎对待异常处理，在工程项目中切勿直接忽略异常。
-            # 错误 message
             print(error.message)
-            # 诊断地址
-            print(error.data.get("Recommend"))
-            UtilClient.assert_as_string(error.message)
 
 
     # 永久性删除指定的非结构化文档（未被知识库应用的）
@@ -268,8 +252,6 @@ class BaiLian:
             # 复制代码运行请自行打印 API 的返回值
             res = self.client.delete_file_with_options(file_id, self.work_space, headers, runtime)
         except Exception as error:
-            # 此处仅做打印展示，请谨慎对待异常处理，在工程项目中切勿直接忽略异常。
-            # 错误 message
             print(error)
 
 
@@ -282,8 +264,6 @@ class BaiLian:
         try:
             # 复制代码运行请自行打印 API 的返回值
             res = self.client.delete_index_document_with_options(self.work_space, delete_request, headers, runtime)
-            print(res)
-            print("-=----------------------------------")
         except Exception as error:
             print(error)
 
@@ -304,6 +284,8 @@ class BaiLian:
 
     @staticmethod
     def stream_chat(issue_str):
+        doc_set = set()
+
         responses = Application.call(
             api_key="sk-51365fd44e35446089269deba6061870",
             app_id='dd81e603c7aa45c6a9c9c5df04e82a33',  # 替换为实际的应用 ID
@@ -311,11 +293,24 @@ class BaiLian:
             stream=True,  # 流式输出
             incremental_output=True)  # 增量输出
 
+        text_info = {"type": "text", "content": ""}
         for response in responses:
             if response.status_code != HTTPStatus.OK:
-                yield f'Error: {response.status_code} - {response.message}\n'
+                text_info["content"] = f'Error: {response.status_code} - {response.message}\n'
             else:
-                yield response.output.text
+                if response.output.doc_references:
+                    for file_data in response.output.doc_references:
+                        doc_set.add(file_data.doc_id)
+                text_info["content"] =response.output.text
+                print(text_info, " ---")
+
+            yield json.dumps(text_info)
+
+        # 文本流输出完毕，额外发送附件信息
+        text_info["type"] = "attachments"
+        text_info["content"] = list(doc_set)
+        print(text_info)
+        yield json.dumps(text_info)
 
 
 if __name__ == '__main__':

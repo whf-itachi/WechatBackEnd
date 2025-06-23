@@ -25,7 +25,8 @@ class TicketAttachmentLink(SQLModel, table=True):
 class Attachment(SQLModel, table=True):
     """附件表"""
     id: Optional[int] = Field(default=None, primary_key=True)
-    file_path: str = Field(max_length=200)
+    file_path: str = Field(max_length=200)  # 仅保存存储目录
+    file_name: str = Field(max_length=200)  # 新增文件名
     file_type: str = Field(max_length=50)
     upload_time: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
