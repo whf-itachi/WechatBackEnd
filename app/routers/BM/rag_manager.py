@@ -142,3 +142,22 @@ async def list_questions(skip: int = 0, limit: int = 10, db: AsyncSession = Depe
         select(Documents).where(Documents.is_delete == 0).offset(skip).limit(limit)
     )
     return result.scalars().all()
+
+
+# 删除rag文档
+@router.delete("/documents/{document_id}")
+async def delete_question(document_id: int, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(Documents).where(Documents.id == document_id))
+    document = result.scalar_one_or_none()
+    if not document:
+        raise HTTPException(status_code=404, detail="问题不存在")
+    print(document.file_id)
+    if document.file_id:
+        # 对于上传了大模型的文档需要调用大模型删除函数
+        await async_delete_rag_document(db, file_id=document.file_id, f_type="document")
+    else:
+        document.is_delete = 1
+        document.updated_at = datetime.now(timezone.utc)
+        db.add(document)
+        await db.commit()
+    return {"message": f"文档 {document.file_name} 删除成功"}
