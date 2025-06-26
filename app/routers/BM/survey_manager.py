@@ -1,3 +1,5 @@
+import openpyxl
+from openpyxl.styles import Font
 from fastapi import APIRouter, Depends, HTTPException, status, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select, func, delete
@@ -588,80 +590,111 @@ async def get_survey_statistics(
     return statistics
 
 
-# ———————————————— 问卷数据导出 ————————————————
-@router.get("/{survey_id}/export")
-async def export_survey_data(
+# ———————————————— 下载问卷统计表 ————————————————
+@router.get("/{survey_id}/download_excel")
+async def export_survey_data_excel(
     survey_id: int,
     db: AsyncSession = Depends(get_db)
 ):
-    """导出问卷数据为CSV"""
+    """导出问卷数据为Excel文件，包含所有题目类型"""
     # 检查问卷是否存在
     survey = await db.get(SurveyModel, survey_id)
     if not survey:
         raise HTTPException(status_code=404, detail="问卷不存在")
 
-    # 获取所有问题
-    questions = await db.execute(
-        select(QuestionModel).where(QuestionModel.survey_id == survey_id)
+    # 获取所有问题（所有类型）
+    questions_result = await db.execute(
+        select(QuestionModel).where(QuestionModel.survey_id == survey_id).order_by(QuestionModel.order)
     )
-    questions = questions.scalars().all()
+    questions = questions_result.scalars().all()
 
-    # 获取所有回答
-    responses = await db.execute(
+    # 获取所有回答记录
+    responses_result = await db.execute(
         select(ResponseModel).where(ResponseModel.survey_id == survey_id)
     )
-    responses = responses.scalars().all()
+    responses = responses_result.scalars().all()
 
-    # 创建CSV文件
-    output = StringIO()
-    writer = csv.writer(output)
+    # 创建 Excel 工作簿
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "问卷统计"
 
-    # 写入表头
-    headers = ["提交时间", "提交者"]
+    # 表头
+    headers = ["公司", "联系人", "联系方式"]
     for question in questions:
         headers.append(question.text)
-    writer.writerow(headers)
+    ws.append(headers)
 
-    # 写入数据
+    # 设置表头加粗
+    for cell in ws[1]:
+        cell.font = Font(bold=True)
+
+    # 填充数据
     for response in responses:
-        row = [response.submitted_at, response.user_name or ""]
-        
+        row = [
+            response.company or "",
+            response.user_name or "",
+            response.phone_number or ""
+        ]
+
         for question in questions:
-            # 获取该问题的答案
-            answer = await db.execute(
+            # 使用异步查询获取该回答记录对应的问题答案
+            answer_result = await db.execute(
                 select(AnswerModel)
                 .where(AnswerModel.response_id == response.id)
                 .where(AnswerModel.question_id == question.id)
             )
-            answer = answer.scalar_one_or_none()
+            answer = answer_result.scalars().first()
 
             if answer:
-                if question.type in ['single_choice', 'multiple_choice']:
-                    # 获取选择的选项
-                    choices = await db.execute(
+                if question.type == "rating":
+                    # 评分题
+                    row.append(str(answer.answer_rating) if answer.answer_rating is not None else "")
+                elif question.type in ["single_choice", "multiple_choice"]:
+                    # 单选或多选题
+                    choices_result = await db.execute(
                         select(OptionModel)
                         .join(AnswerChoiceModel)
                         .where(AnswerChoiceModel.answer_id == answer.id)
                         .order_by(AnswerChoiceModel.order)
                     )
-                    choices = choices.scalars().all()
-                    row.append(", ".join(choice.value for choice in choices))
-                elif question.type == 'rating':
-                    row.append(str(answer.answer_rating))
-                else:  # text
+                    choices = choices_result.scalars().all()
+                    values = [choice.value for choice in choices]
+                    row.append(", ".join(values) if values else "")
+                elif question.type == "text":
+                    # 文本题
                     row.append(answer.answer_text or "")
+                else:
+                    # 其他类型（如有）
+                    row.append("")
             else:
                 row.append("")
 
-        writer.writerow(row)
+        ws.append(row)
 
-    # 准备下载
+    # 自动调整列宽
+    for column in ws.columns:
+        max_length = 0
+        column_letter = openpyxl.utils.get_column_letter(column[0].column)
+        for cell in column:
+            try:
+                if len(str(cell.value)) > max_length:
+                    max_length = len(str(cell.value))
+            except:
+                pass
+        adjusted_width = (max_length + 2)
+        ws.column_dimensions[column_letter].width = adjusted_width
+
+    # 保存到内存
+    output = BytesIO()
+    wb.save(output)
     output.seek(0)
+
+    # 返回下载响应
     return StreamingResponse(
-        iter([output.getvalue()]),
-        media_type="text/csv",
+        output,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={
-            "Content-Disposition": f"attachment; filename=survey_{survey_id}_data.csv"
+            "Content-Disposition": f"attachment; filename=survey_{survey_id}_data.xlsx"
         }
     )
-
