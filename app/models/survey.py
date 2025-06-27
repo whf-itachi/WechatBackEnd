@@ -8,19 +8,22 @@ from sqlalchemy import Column, DateTime, func
 # ————————————————————————
 # 1. 问卷主表 (Survey)
 # ————————————————————————
-
 class SurveyTable(SQLModel, table=True):
     __tablename__ = "surveys"
 
     id: Optional[int] = Field(default=None, primary_key=True)
     title: str = Field(max_length=255)
     description: Optional[str] = Field(default=None)
-    is_active: bool = Field(default=True)
     current_responses: int = Field(default=0)
 
     created_at: datetime = Field(sa_column=Column(DateTime, server_default=func.now()))
-    updated_at: datetime = Field(sa_column=Column(DateTime, server_default=func.now(), onupdate=func.now()))
+    updated_at: datetime = Field(sa_column=Column(DateTime, server_default=func.now(), onupdate=func.now()))\
 
+    expire_at: Optional[datetime] = Field(
+        default=None,
+        sa_column=Column(DateTime),
+        description="问卷填写的截止时间，可为空表示无截止日期"
+    )
     questions: List["SurveyQuestion"] = Relationship(
         back_populates="survey",
         sa_relationship_kwargs={"cascade": "all, delete-orphan"}
@@ -34,15 +37,13 @@ class SurveyTable(SQLModel, table=True):
 # ————————————————————————
 # 2. 问题表 (Question)
 # ————————————————————————
-
 class SurveyQuestion(SQLModel, table=True):
     __tablename__ = "survey_questions"
 
     id: Optional[int] = Field(default=None, primary_key=True)
     survey_id: int = Field(foreign_key="surveys.id")
-    order: int = Field(default=0)
     text: str
-    type: str = Field(max_length=50)  # single_choice, multiple_choice, rating, text
+    type: str = Field(max_length=50)  # single_choice, multiple_choice, rating, text, meta_data
     required: bool = Field(default=False)
 
     created_at: datetime = Field(sa_column=Column(DateTime, server_default=func.now()))
@@ -61,14 +62,13 @@ class SurveyQuestion(SQLModel, table=True):
 # ————————————————————————
 # 3. 选项表 (Option)
 # ————————————————————————
-
 class SurveyOption(SQLModel, table=True):
     __tablename__ = "survey_options"
 
     id: Optional[int] = Field(default=None, primary_key=True)
     question_id: int = Field(foreign_key="survey_questions.id")
     value: str = Field(max_length=255)
-    order: int = Field(default=0)
+    is_other: bool = Field(default=False)  # 标记是否为"其他，请说明"
 
     created_at: datetime = Field(sa_column=Column(DateTime, server_default=func.now()))
 
@@ -79,15 +79,11 @@ class SurveyOption(SQLModel, table=True):
 # ————————————————————————
 # 4. 回答记录表 (Response)
 # ————————————————————————
-
 class SurveyResponse(SQLModel, table=True):
     __tablename__ = "survey_responses"
 
     id: Optional[int] = Field(default=None, primary_key=True)
     survey_id: int = Field(foreign_key="surveys.id")
-    user_name: Optional[str] = Field(default=None)
-    company: Optional[str] = Field(default=None)
-    phone_number: Optional[str] = Field(default=None)
 
     submitted_at: datetime = Field(sa_column=Column(DateTime, server_default=func.now()))
 
@@ -101,7 +97,6 @@ class SurveyResponse(SQLModel, table=True):
 # ————————————————————————
 # 5. 答案表 (Answer)
 # ————————————————————————
-
 class SurveyAnswer(SQLModel, table=True):
     __tablename__ = "survey_answers"
 
@@ -111,7 +106,6 @@ class SurveyAnswer(SQLModel, table=True):
 
     answer_text: Optional[str] = None
     answer_rating: Optional[int] = None
-    submitted_at: datetime = Field(sa_column=Column(DateTime, server_default=func.now()))
 
     response: "SurveyResponse" = Relationship(back_populates="answers")
     question: "SurveyQuestion" = Relationship(back_populates="answers")
@@ -124,13 +118,12 @@ class SurveyAnswer(SQLModel, table=True):
 # ————————————————————————
 # 6. 多选答案关联表 (AnswerChoice)
 # ————————————————————————
-
 class SurveyAnswerChoice(SQLModel, table=True):
     __tablename__ = "survey_answer_choices"
 
     answer_id: int = Field(foreign_key="survey_answers.id", primary_key=True)
     option_id: int = Field(foreign_key="survey_options.id", primary_key=True)
-    order: int = Field(default=0)
+    custom_value: Optional[str] = None  # 如果是"其他，请说明"，则填这个字段
 
     answer: "SurveyAnswer" = Relationship(back_populates="selected_options")
     option: "SurveyOption" = Relationship(back_populates="answer_choices")
