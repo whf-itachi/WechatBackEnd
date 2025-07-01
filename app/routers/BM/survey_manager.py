@@ -410,20 +410,30 @@ async def submit_response(
         db.add(answer)
         await db.flush()
 
-        # 处理选项（包括多选和“其他”）
+        # 统一处理选项（单选、多选、“其他”）
+        selected_ids = []
+
+        # 单选题
+        if ans.selected_option_id is not None:
+            selected_ids.append(ans.selected_option_id)
+
+        # 多选题
         if ans.selected_option_ids:
-            # 查询所有选项（包含 is_other 字段）
-            stmt = select(SurveyOption).where(SurveyOption.id.in_(ans.selected_option_ids))
+            selected_ids.extend(ans.selected_option_ids)
+
+        if selected_ids:
+            # 查询选项详情（含 is_other）
+            stmt = select(SurveyOption).where(SurveyOption.id.in_(selected_ids))
             result = await db.execute(stmt)
             option_list = result.scalars().all()
 
-            # 获取 other_text 映射字典
+            # 获取 other_text 映射
             other_text_map: Dict[str, str] = ans.other_text or {}
 
             for option in option_list:
                 custom_value = None
                 if option.is_other:
-                    # 支持字符串或整数形式 key
+                    # 支持字符串和整数 key 形式
                     custom_value = other_text_map.get(str(option.id)) or other_text_map.get(option.id)
 
                 choice = SurveyAnswerChoice(
@@ -433,7 +443,7 @@ async def submit_response(
                 )
                 db.add(choice)
 
-    # 更新答卷数
+    # 更新问卷的提交数
     survey.current_responses += 1
     await db.commit()
 

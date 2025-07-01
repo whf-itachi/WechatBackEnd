@@ -71,6 +71,7 @@ class AnswerSubmit(BaseModel):
     question_id: int
     answer_text: Optional[str] = None
     answer_rating: Optional[int] = None
+    selected_option_id: Optional[int] = None
     selected_option_ids: Optional[List[int]] = None
     other_text: Optional[Dict[str, str]] = None  # key 为 option_id，value 为自定义值
 
