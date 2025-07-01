@@ -1,97 +1,93 @@
+import traceback
 import openpyxl
 from openpyxl.styles import Font
-from fastapi import APIRouter, Depends, HTTPException, status, Request
+from fastapi import APIRouter, Depends, HTTPException, status, Request, Query
 from fastapi.responses import StreamingResponse
-from sqlalchemy import select, func, delete
+from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload, selectinload
 
-from typing import List
-import csv
-from io import StringIO
 import qrcode
 from io import BytesIO
 from app.db_services.database import get_db
 from app.logger import get_logger
-from app.models.survey import (
-    SurveyTable as SurveyModel,
-    SurveyQuestion as QuestionModel,
-    SurveyOption as OptionModel,
-    SurveyResponse as ResponseModel,
-    SurveyAnswer as AnswerModel,
-    SurveyAnswerChoice as AnswerChoiceModel, SurveyTable, SurveyQuestion, SurveyAnswer, SurveyAnswerChoice, SurveyOption
-)
-from app.schemas.survey_schema import (
-    SurveyCreate,
-    SurveyUpdate,
-    SurveyOut,
-    SurveyWithQuestions,
-    ResponseSubmit, SurveyResponseSummary, AnswerOutFull, ResponseDetailOut, SurveyStatisticsResponse, PaginatedResponse
-)
+from app.models.survey import SurveyTable, SurveyQuestion, SurveyOption, SurveyResponse, SurveyAnswer, SurveyAnswerChoice
+from app.schemas.survey_schema import *
 
 router = APIRouter()
 logger = get_logger('Survey_router')
 
-@router.get("/responses", response_model=PaginatedResponse)
-async def list_all_survey_responses(
-    skip: int = 0,
-    limit: int = 10,
+
+
+# 获取某问卷所有回答列表
+@router.get("/responses", response_model=ResponseList)
+async def survey_responses_list(
+    survey_id: int = Query(..., description="问卷 ID"),
+    skip: int = Query(0, ge=0),
+    limit: int = Query(10, ge=1),
     db: AsyncSession = Depends(get_db)
 ):
-    # 主查询（带分页）
+    # 1. 校验问卷是否存在
+    survey_stmt = select(SurveyTable.id).where(SurveyTable.id == survey_id)
+    survey_result = await db.execute(survey_stmt)
+    if not survey_result.scalar():
+        raise HTTPException(status_code=404, detail="Survey not found")
+
+    # 2. 查询回答列表及其关联的答案和问题
     stmt = (
-        select(ResponseModel)
-        .options(selectinload(ResponseModel.survey))
-        .order_by(ResponseModel.id.desc())
+        select(SurveyResponse)
+        .where(SurveyResponse.survey_id == survey_id)
+        .options(
+            selectinload(SurveyResponse.answers).selectinload(SurveyAnswer.question)
+        )
+        .order_by(SurveyResponse.id.desc())
         .offset(skip)
         .limit(limit)
     )
-
-    # 总数查询
-    count_stmt = select(func.count()).select_from(ResponseModel)
-
     result = await db.execute(stmt)
-    count_result = await db.execute(count_stmt)
-
     responses = result.scalars().all()
-    total = count_result.scalar_one()
-    items = [
-        SurveyResponseSummary(
-            id=r.id,
-            user_name=r.user_name,
-            submitted_at=r.submitted_at.strftime("%Y-%m-%d %H:%M:%S") if r.submitted_at else None,
-            survey_title=r.survey.title if r.survey else "",
-            survey_id=r.survey.id if r.survey else None
-        )
-        for r in responses
-    ]
 
-    return {
-        "items": items,
-        "total": total
-    }
+    # 3. 总数统计
+    count_stmt = (
+        select(func.count())
+        .select_from(SurveyResponse)
+        .where(SurveyResponse.survey_id == survey_id)
+    )
+    total = (await db.execute(count_stmt)).scalar_one()
+
+    # 4. 组装响应数据
+    items = []
+    for response in responses:
+        metadata_answers = {
+            answer.question.text: answer.answer_text
+            for answer in response.answers
+            if answer.question.type == "meta_data"
+        }
+
+        items.append(ResponseItem(
+            id=response.id,
+            submitted_at=response.submitted_at,
+            metadata_answers=metadata_answers
+        ))
+
+    return ResponseList(total=total, items=items)
 
 
 # 获取具体问卷回答详情
-@router.get("/responses/{response_id}", response_model=ResponseDetailOut)
-async def get_response_detail(response_id: int, db: AsyncSession = Depends(get_db)):
+@router.get("/old/answer/{response_id}", response_model=ResponseDetailOut)
+async def old_response_answer_detail(response_id: int, db: AsyncSession = Depends(get_db)):
     result = await db.execute(
-        select(ResponseModel)
-        .where(ResponseModel.id == response_id)
+        select(SurveyResponse)
+        .where(SurveyResponse.id == response_id)
         .options(
-            joinedload(ResponseModel.survey),
-            joinedload(ResponseModel.answers)
-            .joinedload(AnswerModel.selected_options)
-            .joinedload(AnswerChoiceModel.option),
-            joinedload(ResponseModel.answers)
-            .joinedload(AnswerModel.question)
+            joinedload(SurveyResponse.survey),
+            joinedload(SurveyResponse.answers).joinedload(SurveyAnswer.selected_options).joinedload(SurveyAnswerChoice.option),
+            joinedload(SurveyResponse.answers).joinedload(SurveyAnswer.question)
         )
     )
     r = result.unique().scalar_one_or_none()
-
     if not r:
         raise HTTPException(status_code=404, detail="提交记录不存在")
-
     answers_out = []
     for a in r.answers:
         q = a.question
@@ -103,15 +99,70 @@ async def get_response_detail(response_id: int, db: AsyncSession = Depends(get_d
             answer_text=a.answer_text,
             answer_rating=a.answer_rating,
             selected_option_values=[
-                c.option.value for c in a.selected_options if c.option
-            ] if a.selected_options else None
+                c.custom_value if c.option and c.option.is_other else c.option.value
+                for c in a.selected_options if c.option
+            ]
+        ))
+    return ResponseDetailOut(
+        id=r.id,
+        submitted_at=r.submitted_at,
+        survey_title=r.survey.title if r.survey else "",
+        answers=answers_out
+    )
+# 获取具体问卷回答详情
+@router.get("/answer/{response_id}", response_model=ResponseDetailOut)
+async def response_answer_detail(response_id: int, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(
+        select(SurveyResponse)
+        .where(SurveyResponse.id == response_id)
+        .options(
+            joinedload(SurveyResponse.survey),
+            joinedload(SurveyResponse.answers)
+                .joinedload(SurveyAnswer.selected_options)
+                .joinedload(SurveyAnswerChoice.option),
+            joinedload(SurveyResponse.answers).joinedload(SurveyAnswer.question)
+        )
+    )
+    r = result.unique().scalar_one_or_none()
+    if not r:
+        raise HTTPException(status_code=404, detail="提交记录不存在")
+
+    answers_out = []
+    for a in r.answers:
+        q = a.question
+
+        selected_option_id = None
+        selected_option_ids = None
+        other_text = {}
+
+        if a.selected_options:
+            selected_ids = []
+            for choice in a.selected_options:
+                if not choice.option:
+                    continue
+                selected_ids.append(choice.option.id)
+                if choice.option.is_other:
+                    other_text[str(choice.option.id)] = choice.custom_value
+
+            if q.type == "single_choice":
+                selected_option_id = selected_ids[0] if selected_ids else None
+            elif q.type == "multiple_choice":
+                selected_option_ids = selected_ids
+
+        answers_out.append(AnswerOutFull(
+            question_id=q.id,
+            question_text=q.text,
+            question_type=q.type,
+            required=q.required,
+            answer_text=a.answer_text,
+            answer_rating=a.answer_rating,
+            selected_option_id=selected_option_id,
+            selected_option_ids=selected_option_ids,
+            other_text=other_text or None
         ))
 
     return ResponseDetailOut(
         id=r.id,
-        user_name=r.user_name,
-        company=r.company,
-        phone_number=r.phone_number,
         submitted_at=r.submitted_at,
         survey_title=r.survey.title if r.survey else "",
         answers=answers_out
@@ -121,25 +172,19 @@ async def get_response_detail(response_id: int, db: AsyncSession = Depends(get_d
 
 @router.get("/statistics/{survey_id}", response_model=SurveyStatisticsResponse)
 async def get_survey_statistics(survey_id: int, db: AsyncSession = Depends(get_db)):
-    # 查询问卷是否存在
     survey_result = await db.execute(
         select(SurveyTable).where(SurveyTable.id == survey_id)
     )
     survey = survey_result.scalars().first()
     if not survey:
         raise HTTPException(status_code=404, detail="问卷不存在")
-
-    # 查询所有问题 + 选项（注意使用 joinedload）
     questions_result = await db.execute(
         select(SurveyQuestion)
         .where(SurveyQuestion.survey_id == survey_id)
         .options(joinedload(SurveyQuestion.options))
     )
-
     questions = questions_result.unique().scalars().all()
-
     stats = []
-
     for q in questions:
         if q.type == "rating":
             avg_score = await db.scalar(
@@ -153,18 +198,15 @@ async def get_survey_statistics(survey_id: int, db: AsyncSession = Depends(get_d
                 "type": q.type,
                 "average_score": round(float(avg_score or 0), 2)
             })
-
         elif q.type in ["single_choice", "multiple_choice"]:
             stmt = (
                 select(SurveyOption.value, func.count(SurveyAnswerChoice.option_id))
-                .join(SurveyAnswerChoice.option)
-                .where(SurveyAnswerChoice.answer.has(question_id=q.id))
+                .join(SurveyAnswerChoice, SurveyOption.id == SurveyAnswerChoice.option_id)
+                .where(SurveyOption.question_id == q.id)
                 .group_by(SurveyOption.value)
             )
-
             result = await db.execute(stmt)
             raw_stats = result.all()
-
             total = sum(count for _, count in raw_stats) if raw_stats else 1
             formatted_options = [
                 {
@@ -174,97 +216,76 @@ async def get_survey_statistics(survey_id: int, db: AsyncSession = Depends(get_d
                 }
                 for value, count in raw_stats
             ]
-
             stats.append({
                 "question_id": q.id,
                 "question_text": q.text,
                 "type": q.type,
                 "options_stat": formatted_options
             })
-
     return SurveyStatisticsResponse(root=stats)
+
 
 # ———————————————— 获取所有问卷（带分页、过滤） ————————————————
 @router.get("/", response_model=List[SurveyOut])
-async def list_surveys(skip: int = 0,limit: int = 10,db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(SurveyModel).offset(skip).limit(limit))
+async def list_surveys(skip: int = 0, limit: int = 10, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(SurveyTable).offset(skip).limit(limit))
     surveys = result.scalars().all()
-
     survey_list = []
     for survey in surveys:
-        # 获取问卷的响应数量
-        count_result = await db.execute(select(ResponseModel).where(ResponseModel.survey_id == survey.id))
-        response_count = len(count_result.scalars().all())
-        
-        # 构造返回数据
         survey_data = {
             "id": survey.id,
             "title": survey.title,
             "description": survey.description,
-            "is_active": survey.is_active,
-            "current_responses": response_count,
+            "is_active": True,  # 新模型SurveyTable无is_active字段，默认True
+            "current_responses": survey.current_responses,
             "created_at": survey.created_at,
             "updated_at": survey.updated_at
         }
         survey_list.append(SurveyOut(**survey_data))
-
     return survey_list
 
 
 # ———————————————— 创建问卷 ————————————————
 @router.post("/", response_model=SurveyOut)
-async def create_survey(survey_data: SurveyCreate,db: AsyncSession = Depends(get_db)):
-    """创建问卷，包括问题和选项"""
+async def create_survey(survey_data: SurveyCreate, db: AsyncSession = Depends(get_db)):
     try:
-        # 1. 创建问卷基本信息
-        survey = SurveyModel(
+        survey = SurveyTable(
             title=survey_data.title,
             description=survey_data.description,
-            is_active=True,
             current_responses=0
         )
         db.add(survey)
-        await db.flush()  # 获取 survey.id
-
-        # 2. 创建问题和选项
+        await db.flush()
         for question_data in survey_data.questions:
-            # 创建问题
-            question = QuestionModel(
+            question = SurveyQuestion(
                 survey_id=survey.id,
                 text=question_data.text,
                 type=question_data.type,
-                required=question_data.required,
-                order=question_data.order
+                required=question_data.required
             )
             db.add(question)
-            await db.flush()  # 获取 question.id
-
-            # 如果是选择题，创建选项
+            await db.flush()
             if question_data.type in ['single_choice', 'multiple_choice'] and question_data.options:
                 for option_data in question_data.options:
-                    option = OptionModel(
+                    option = SurveyOption(
                         question_id=question.id,
                         value=option_data.value,
-                        order=option_data.order
+                        is_other=option_data.is_other
                     )
                     db.add(option)
-
         await db.commit()
         await db.refresh(survey)
-
-        # 构造返回数据
         survey_data = {
             "id": survey.id,
             "title": survey.title,
             "description": survey.description,
-            "is_active": survey.is_active,
             "current_responses": survey.current_responses,
             "created_at": survey.created_at,
             "updated_at": survey.updated_at
         }
         return SurveyOut(**survey_data)
-
     except Exception as e:
+        print(traceback.format_exc())
         await db.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -275,142 +296,71 @@ async def create_survey(survey_data: SurveyCreate,db: AsyncSession = Depends(get
 # ———————————————— 获取单个问卷详情（含问题和选项） ————————————————
 @router.get("/{survey_id}", response_model=SurveyWithQuestions)
 async def get_survey(survey_id: int, db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(SurveyModel).where(SurveyModel.id == survey_id))
-    survey = result.scalar_one_or_none()
-
-    if not survey:
-        raise HTTPException(status_code=404, detail="问卷不存在")
-
-    # 查询问题
-    question_result = await db.execute(select(QuestionModel).where(QuestionModel.survey_id == survey_id))
-    questions = question_result.scalars().all()
-
-    question_list = []
-    for q in questions:
-        option_result = await db.execute(select(OptionModel).where(OptionModel.question_id == q.id))
-        options = option_result.scalars().all()
-
-        question_list.append({
-            "id": q.id,
-            "text": q.text,
-            "order": q.order,
-            "type": q.type,
-            "options": [
-                {
-                    "id": o.id,
-                    "question_id": o.question_id,
-                    "value": o.value,
-                    "order": o.order,
-                    "created_at": o.created_at,
-                }
-                for o in options
-            ]
-        })
-
-    # 最终返回结构
-    return {
-        "id": survey.id,
-        "title": survey.title,
-        "description": survey.description,
-        "created_at": survey.created_at,
-        "updated_at": survey.updated_at,
-        "is_active": survey.is_active,
-        "current_responses": survey.current_responses,
-        "questions": question_list
-    }
-
-
-
-# ———————————————— 更新问卷信息 ————————————————
-@router.put("/{survey_id}", response_model=SurveyOut)
-async def update_survey(survey_id: int,survey_data: SurveyUpdate,db: AsyncSession = Depends(get_db)):
-    """更新问卷信息，包括问题和选项"""
     try:
-        # 获取问卷
-        result = await db.execute(select(SurveyModel).where(SurveyModel.id == survey_id))
+        result = await db.execute(select(SurveyTable).where(SurveyTable.id == survey_id))
         survey = result.scalar_one_or_none()
-
         if not survey:
             raise HTTPException(status_code=404, detail="问卷不存在")
+        question_result = await db.execute(select(SurveyQuestion).where(SurveyQuestion.survey_id == survey_id))
+        questions = question_result.scalars().all()
+        question_list = []
+        for q in questions:
+            option_result = await db.execute(select(SurveyOption).where(SurveyOption.question_id == q.id))
+            options = option_result.scalars().all()
+            question_list.append({
+                "id": q.id,
+                "text": q.text,
+                "type": q.type,
+                "options": [
+                    {
+                        "id": o.id,
+                        "question_id": o.question_id,
+                        "value": o.value,
+                        "is_other": o.is_other
+                    }
+                    for o in options
+                ]
+            })
+        return {
+                "id": survey.id,
+                "title": survey.title,
+                "description": survey.description,
+                "created_at": survey.created_at,
+                "updated_at": survey.updated_at,
+                "current_responses": survey.current_responses,
+                "questions": question_list
+                }
+    except Exception as e:
+        print(traceback.format_exc())
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="系统错误"
+        )
 
-        # 更新问卷基本信息
+
+# ———————————————— 更新问卷信息 ————————————————  这个接口没有使用
+@router.put("/{survey_id}", response_model=SurveyOut)
+async def update_survey(survey_id: int, survey_data: SurveyUpdate, db: AsyncSession = Depends(get_db)):
+    try:
+        result = await db.execute(select(SurveyTable).where(SurveyTable.id == survey_id))
+        survey = result.scalar_one_or_none()
+        if not survey:
+            raise HTTPException(status_code=404, detail="问卷不存在")
         for key, value in survey_data.dict(exclude_unset=True).items():
-            if key != 'questions':  # 排除questions字段，单独处理
+            if key != 'questions':
                 setattr(survey, key, value)
-
-        # 如果包含questions字段，更新问题和选项
-        if hasattr(survey_data, 'questions') and survey_data.questions:
-            # 获取现有问题
-            existing_questions = await db.execute(select(QuestionModel).where(QuestionModel.survey_id == survey_id))
-            existing_questions = existing_questions.scalars().all()
-            existing_question_ids = {q.id for q in existing_questions}
-
-            # 处理每个问题
-            for question_data in survey_data.questions:
-                if hasattr(question_data, 'id') and question_data.id:
-                    # 更新现有问题
-                    question = next((q for q in existing_questions if q.id == question_data.id), None)
-                    if question:
-                        question.text = question_data.text
-                        question.type = question_data.type
-                        question.required = question_data.required
-                        question.order = question_data.order
-                        existing_question_ids.remove(question.id)
-                else:
-                    # 创建新问题
-                    question = QuestionModel(
-                        survey_id=survey_id,
-                        text=question_data.text,
-                        type=question_data.type,
-                        required=question_data.required,
-                        order=question_data.order
-                    )
-                    db.add(question)
-                    await db.flush()
-
-                # 处理选项
-                if question_data.type in ['single_choice', 'multiple_choice'] and question_data.options:
-                    # 获取现有选项
-                    existing_options = await db.execute(
-                        select(OptionModel).where(OptionModel.question_id == question.id)
-                    )
-                    existing_options = existing_options.scalars().all()
-                    existing_option_ids = {o.id for o in existing_options}
-
-                    # 处理每个选项
-                    for option_data in question_data.options:
-                        if hasattr(option_data, 'id') and option_data.id:
-                            # 更新现有选项
-                            option = next((o for o in existing_options if o.id == option_data.id), None)
-                            if option:
-                                option.value = option_data.value
-                                option.order = option_data.order
-                                existing_option_ids.remove(option.id)
-                        else:
-                            # 创建新选项
-                            option = OptionModel(
-                                question_id=question.id,
-                                value=option_data.value,
-                                order=option_data.order
-                            )
-                            db.add(option)
-
-                    # 删除未使用的选项
-                    if existing_option_ids:
-                        await db.execute(
-                            delete(OptionModel).where(OptionModel.id.in_(existing_option_ids))
-                        )
-
-            # 删除未使用的问题
-            if existing_question_ids:
-                await db.execute(
-                    delete(QuestionModel).where(QuestionModel.id.in_(existing_question_ids))
-                )
-
         await db.commit()
         await db.refresh(survey)
-        return survey
-
+        survey_data = {
+            "id": survey.id,
+            "title": survey.title,
+            "description": survey.description,
+            "is_active": True,
+            "current_responses": survey.current_responses,
+            "created_at": survey.created_at,
+            "updated_at": survey.updated_at
+        }
+        return SurveyOut(**survey_data)
     except Exception as e:
         await db.rollback()
         raise HTTPException(
@@ -419,15 +369,13 @@ async def update_survey(survey_id: int,survey_data: SurveyUpdate,db: AsyncSessio
         )
 
 
-# ———————————————— 删除问卷 ————————————————
+# ———————————————— 删除问卷 ————————————————  暂时没有使用
 @router.delete("/{survey_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_survey(survey_id: int, db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(SurveyModel).where(SurveyModel.id == survey_id))
+    result = await db.execute(select(SurveyTable).where(SurveyTable.id == survey_id))
     survey = result.scalar_one_or_none()
-
     if not survey:
         raise HTTPException(status_code=404, detail="问卷不存在")
-
     await db.delete(survey)
     await db.commit()
     return
@@ -441,98 +389,93 @@ async def submit_response(
     db: AsyncSession = Depends(get_db)
 ):
     # 检查问卷是否存在
-    survey_result = await db.execute(select(SurveyModel).where(SurveyModel.id == survey_id))
-    survey = survey_result.scalar_one_or_none()
-
+    result = await db.execute(select(SurveyTable).where(SurveyTable.id == survey_id))
+    survey = result.scalar_one_or_none()
     if not survey:
         raise HTTPException(status_code=404, detail="问卷不存在")
 
-    # 创建提交记录，并写入用户信息
-    response = ResponseModel(
-        survey_id=survey_id,
-        user_name=data.user_name,
-        company=data.company,
-        phone_number=data.phone_number
-    )
+    # 创建答卷记录
+    response = SurveyResponse(survey_id=survey_id)
     db.add(response)
-    await db.flush()  # 获取 response.id
+    await db.flush()
 
-    # 保存每道题的答案
     for ans in data.answers:
-        # 创建答案记录
-        answer = AnswerModel(
+        # 创建回答记录
+        answer = SurveyAnswer(
             response_id=response.id,
             question_id=ans.question_id,
             answer_text=ans.answer_text,
             answer_rating=ans.answer_rating
         )
         db.add(answer)
-        await db.flush()  # 获取 answer.id
+        await db.flush()
 
-        # 如果是选择题，创建选项关联
+        # 处理选项（包括多选和“其他”）
         if ans.selected_option_ids:
-            for order, option_id in enumerate(ans.selected_option_ids):
-                choice = AnswerChoiceModel(
+            # 查询所有选项（包含 is_other 字段）
+            stmt = select(SurveyOption).where(SurveyOption.id.in_(ans.selected_option_ids))
+            result = await db.execute(stmt)
+            option_list = result.scalars().all()
+
+            # 获取 other_text 映射字典
+            other_text_map: Dict[str, str] = ans.other_text or {}
+
+            for option in option_list:
+                custom_value = None
+                if option.is_other:
+                    # 支持字符串或整数形式 key
+                    custom_value = other_text_map.get(str(option.id)) or other_text_map.get(option.id)
+
+                choice = SurveyAnswerChoice(
                     answer_id=answer.id,
-                    option_id=option_id,
-                    order=order
+                    option_id=option.id,
+                    custom_value=custom_value
                 )
                 db.add(choice)
 
-    # 更新问卷响应数
+    # 更新答卷数
     survey.current_responses += 1
-
     await db.commit()
+
     return {"message": "提交成功"}
+
 
 
 # ———————————————— 生成问卷二维码 ————————————————
 @router.get("/{survey_id}/qr")
 async def generate_qr(request: Request, survey_id: int):
-    # 从请求对象中获取基础 URL
     base_url = str(request.base_url)
     if "8000" in base_url:
         base_url = "http://localhost:5173/"
-    # 构建完整的调查链接
     url = f"{base_url}survey/fill/{survey_id}"
-
     qr = qrcode.QRCode(version=1, box_size=10, border=4)
     qr.add_data(url)
     img = qr.make_image(fill_color="black", back_color="white")
-
     img_bytes = BytesIO()
     img.save(img_bytes, format='PNG')
     img_bytes.seek(0)
-
     return StreamingResponse(img_bytes, media_type="image/png")
 
 
 # ———————————————— 问卷统计 ————————————————
 @router.get("/{survey_id}/statistics")
-async def get_survey_statistics(
+async def get_survey_statistics_detail(
     survey_id: int,
     db: AsyncSession = Depends(get_db)
 ):
-    """获取问卷统计信息"""
-    # 检查问卷是否存在
-    survey = await db.get(SurveyModel, survey_id)
+    survey = await db.get(SurveyTable, survey_id)
     if not survey:
         raise HTTPException(status_code=404, detail="问卷不存在")
-
-    # 获取所有问题
     questions = await db.execute(
-        select(QuestionModel).where(QuestionModel.survey_id == survey_id)
+        select(SurveyQuestion).where(SurveyQuestion.survey_id == survey_id)
     )
     questions = questions.scalars().all()
-
     statistics = {
         "survey_id": survey_id,
         "title": survey.title,
         "total_responses": survey.current_responses,
         "questions": []
     }
-
-    # 统计每个问题的答案
     for question in questions:
         question_stats = {
             "question_id": question.id,
@@ -540,53 +483,42 @@ async def get_survey_statistics(
             "type": question.type,
             "statistics": {}
         }
-
         if question.type in ['single_choice', 'multiple_choice']:
-            # 获取选项统计
             options = await db.execute(
-                select(OptionModel).where(OptionModel.question_id == question.id)
+                select(SurveyOption).where(SurveyOption.question_id == question.id)
             )
             options = options.scalars().all()
-
             for option in options:
-                # 统计选择该选项的次数
                 count = await db.execute(
-                    select(func.count(AnswerChoiceModel.option_id))
-                    .where(AnswerChoiceModel.option_id == option.id)
+                    select(func.count(SurveyAnswerChoice.option_id))
+                    .where(SurveyAnswerChoice.option_id == option.id)
                 )
                 count = count.scalar()
                 question_stats["statistics"][option.value] = count
-
         elif question.type == 'rating':
-            # 获取评分统计
             ratings = await db.execute(
-                select(AnswerModel.answer_rating)
-                .where(AnswerModel.question_id == question.id)
-                .where(AnswerModel.answer_rating.isnot(None))
+                select(SurveyAnswer.answer_rating)
+                .where(SurveyAnswer.question_id == question.id)
+                .where(SurveyAnswer.answer_rating.isnot(None))
             )
             ratings = ratings.scalars().all()
-            
             if ratings:
                 question_stats["statistics"] = {
                     "average": sum(ratings) / len(ratings),
                     "min": min(ratings),
                     "max": max(ratings),
                     "distribution": {
-                        str(i): ratings.count(i) for i in range(1, 6)  # 假设评分范围是1-5
+                        str(i): ratings.count(i) for i in range(1, 6)
                     }
                 }
-
         elif question.type == 'text':
-            # 获取文本答案数量
             count = await db.execute(
-                select(func.count(AnswerModel.id))
-                .where(AnswerModel.question_id == question.id)
-                .where(AnswerModel.answer_text.isnot(None))
+                select(func.count(SurveyAnswer.id))
+                .where(SurveyAnswer.question_id == question.id)
+                .where(SurveyAnswer.answer_text.isnot(None))
             )
             question_stats["statistics"]["total_text_answers"] = count.scalar()
-
         statistics["questions"].append(question_stats)
-
     return statistics
 
 
@@ -596,83 +528,54 @@ async def export_survey_data_excel(
     survey_id: int,
     db: AsyncSession = Depends(get_db)
 ):
-    """导出问卷数据为Excel文件，包含所有题目类型"""
-    # 检查问卷是否存在
-    survey = await db.get(SurveyModel, survey_id)
+    survey = await db.get(SurveyTable, survey_id)
     if not survey:
         raise HTTPException(status_code=404, detail="问卷不存在")
-
-    # 获取所有问题（所有类型）
     questions_result = await db.execute(
-        select(QuestionModel).where(QuestionModel.survey_id == survey_id).order_by(QuestionModel.order)
+        select(SurveyQuestion).where(SurveyQuestion.survey_id == survey_id)
     )
     questions = questions_result.scalars().all()
-
-    # 获取所有回答记录
     responses_result = await db.execute(
-        select(ResponseModel).where(ResponseModel.survey_id == survey_id)
+        select(SurveyResponse).where(SurveyResponse.survey_id == survey_id)
     )
     responses = responses_result.scalars().all()
-
-    # 创建 Excel 工作簿
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.title = "问卷统计"
-
-    # 表头
-    headers = ["公司", "联系人", "联系方式"]
+    headers = []
     for question in questions:
         headers.append(question.text)
     ws.append(headers)
-
-    # 设置表头加粗
     for cell in ws[1]:
         cell.font = Font(bold=True)
-
-    # 填充数据
     for response in responses:
-        row = [
-            response.company or "",
-            response.user_name or "",
-            response.phone_number or ""
-        ]
-
+        row = []
         for question in questions:
-            # 使用异步查询获取该回答记录对应的问题答案
             answer_result = await db.execute(
-                select(AnswerModel)
-                .where(AnswerModel.response_id == response.id)
-                .where(AnswerModel.question_id == question.id)
+                select(SurveyAnswer)
+                .where(SurveyAnswer.response_id == response.id)
+                .where(SurveyAnswer.question_id == question.id)
             )
             answer = answer_result.scalars().first()
-
             if answer:
                 if question.type == "rating":
-                    # 评分题
                     row.append(str(answer.answer_rating) if answer.answer_rating is not None else "")
                 elif question.type in ["single_choice", "multiple_choice"]:
-                    # 单选或多选题
                     choices_result = await db.execute(
-                        select(OptionModel)
-                        .join(AnswerChoiceModel)
-                        .where(AnswerChoiceModel.answer_id == answer.id)
-                        .order_by(AnswerChoiceModel.order)
+                        select(SurveyOption)
+                        .join(SurveyAnswerChoice, SurveyOption.id == SurveyAnswerChoice.option_id)
+                        .where(SurveyAnswerChoice.answer_id == answer.id)
                     )
                     choices = choices_result.scalars().all()
                     values = [choice.value for choice in choices]
                     row.append(", ".join(values) if values else "")
                 elif question.type == "text":
-                    # 文本题
                     row.append(answer.answer_text or "")
                 else:
-                    # 其他类型（如有）
                     row.append("")
             else:
                 row.append("")
-
         ws.append(row)
-
-    # 自动调整列宽
     for column in ws.columns:
         max_length = 0
         column_letter = openpyxl.utils.get_column_letter(column[0].column)
@@ -684,13 +587,9 @@ async def export_survey_data_excel(
                 pass
         adjusted_width = (max_length + 2)
         ws.column_dimensions[column_letter].width = adjusted_width
-
-    # 保存到内存
     output = BytesIO()
     wb.save(output)
     output.seek(0)
-
-    # 返回下载响应
     return StreamingResponse(
         output,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
