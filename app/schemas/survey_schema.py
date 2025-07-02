@@ -23,6 +23,7 @@ class QuestionCreate(BaseModel):
 class SurveyCreate(BaseModel):
     title: str = Field(..., max_length=255)
     description: Optional[str] = None
+    expire_at: Optional[datetime] = None
     questions: List[QuestionCreate]
 
 
@@ -36,6 +37,7 @@ class SurveyOut(BaseModel):
     title: str
     description: Optional[str]
     current_responses: int
+    expire_at: Optional[datetime] = None
     created_at: datetime
     updated_at: datetime
 

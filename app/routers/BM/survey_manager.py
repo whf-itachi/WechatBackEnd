@@ -1,4 +1,6 @@
 import traceback
+from datetime import timezone
+
 import openpyxl
 from openpyxl.styles import Font
 from fastapi import APIRouter, Depends, HTTPException, status, Request, Query
@@ -190,10 +192,16 @@ async def get_survey_statistics(survey_id: int, db: AsyncSession = Depends(get_d
 
 
 # ———————————————— 获取所有问卷（带分页、过滤） ————————————————
-@router.get("/", response_model=List[SurveyOut])
+@router.get("/", response_model=Dict[str, Union[int, List[SurveyOut]]])
 async def list_surveys(skip: int = 0, limit: int = 10, db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(SurveyTable).offset(skip).limit(limit))
+    # 查询总数量
+    count_stmt = select(func.count()).select_from(SurveyTable)
+    total_result = await db.execute(count_stmt)
+    total = total_result.scalar_one()
+
+    result = await db.execute(select(SurveyTable).order_by(SurveyTable.id.desc()).offset(skip).limit(limit))
     surveys = result.scalars().all()
+
     survey_list = []
     for survey in surveys:
         survey_data = {
@@ -202,11 +210,16 @@ async def list_surveys(skip: int = 0, limit: int = 10, db: AsyncSession = Depend
             "description": survey.description,
             "is_active": True,  # 新模型SurveyTable无is_active字段，默认True
             "current_responses": survey.current_responses,
+            "expire_at": survey.expire_at,
             "created_at": survey.created_at,
             "updated_at": survey.updated_at
         }
         survey_list.append(SurveyOut(**survey_data))
-    return survey_list
+
+    return {
+        "total": total,
+        "items": survey_list
+    }
 
 
 # ———————————————— 创建问卷 ————————————————
@@ -216,6 +229,7 @@ async def create_survey(survey_data: SurveyCreate, db: AsyncSession = Depends(ge
         survey = SurveyTable(
             title=survey_data.title,
             description=survey_data.description,
+            expire_at=survey_data.expire_at,
             current_responses=0
         )
         db.add(survey)
@@ -357,6 +371,12 @@ async def submit_response(
     survey = result.scalar_one_or_none()
     if not survey:
         raise HTTPException(status_code=404, detail="问卷不存在")
+
+    if survey.expire_at is not None and survey.expire_at < datetime.now():
+        raise HTTPException(
+            status_code=400,
+            detail="该问卷已过期，无法提交"
+        )
 
     # 创建答卷记录
     response = SurveyResponse(survey_id=survey_id)
