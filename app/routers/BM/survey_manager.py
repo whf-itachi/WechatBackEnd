@@ -74,42 +74,6 @@ async def survey_responses_list(
 
 
 # 获取具体问卷回答详情
-@router.get("/old/answer/{response_id}", response_model=ResponseDetailOut)
-async def old_response_answer_detail(response_id: int, db: AsyncSession = Depends(get_db)):
-    result = await db.execute(
-        select(SurveyResponse)
-        .where(SurveyResponse.id == response_id)
-        .options(
-            joinedload(SurveyResponse.survey),
-            joinedload(SurveyResponse.answers).joinedload(SurveyAnswer.selected_options).joinedload(SurveyAnswerChoice.option),
-            joinedload(SurveyResponse.answers).joinedload(SurveyAnswer.question)
-        )
-    )
-    r = result.unique().scalar_one_or_none()
-    if not r:
-        raise HTTPException(status_code=404, detail="提交记录不存在")
-    answers_out = []
-    for a in r.answers:
-        q = a.question
-        answers_out.append(AnswerOutFull(
-            question_id=q.id,
-            question_text=q.text,
-            question_type=q.type,
-            required=q.required,
-            answer_text=a.answer_text,
-            answer_rating=a.answer_rating,
-            selected_option_values=[
-                c.custom_value if c.option and c.option.is_other else c.option.value
-                for c in a.selected_options if c.option
-            ]
-        ))
-    return ResponseDetailOut(
-        id=r.id,
-        submitted_at=r.submitted_at,
-        survey_title=r.survey.title if r.survey else "",
-        answers=answers_out
-    )
-# 获取具体问卷回答详情
 @router.get("/answer/{response_id}", response_model=ResponseDetailOut)
 async def response_answer_detail(response_id: int, db: AsyncSession = Depends(get_db)):
     result = await db.execute(
