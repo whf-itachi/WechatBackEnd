@@ -525,23 +525,27 @@ async def export_survey_data_excel(
     survey = await db.get(SurveyTable, survey_id)
     if not survey:
         raise HTTPException(status_code=404, detail="问卷不存在")
+
     questions_result = await db.execute(
         select(SurveyQuestion).where(SurveyQuestion.survey_id == survey_id)
     )
     questions = questions_result.scalars().all()
+
     responses_result = await db.execute(
         select(SurveyResponse).where(SurveyResponse.survey_id == survey_id)
     )
     responses = responses_result.scalars().all()
+
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.title = "问卷统计"
-    headers = []
-    for question in questions:
-        headers.append(question.text)
+
+    # 添加表头
+    headers = [question.text for question in questions]
     ws.append(headers)
     for cell in ws[1]:
         cell.font = Font(bold=True)
+
     for response in responses:
         row = []
         for question in questions:
@@ -551,39 +555,58 @@ async def export_survey_data_excel(
                 .where(SurveyAnswer.question_id == question.id)
             )
             answer = answer_result.scalars().first()
+
             if answer:
                 if question.type == "rating":
                     row.append(str(answer.answer_rating) if answer.answer_rating is not None else "")
                 elif question.type in ["single_choice", "multiple_choice"]:
+                    # 这里查选项及自定义值
                     choices_result = await db.execute(
-                        select(SurveyOption)
+                        select(SurveyOption, SurveyAnswerChoice)
                         .join(SurveyAnswerChoice, SurveyOption.id == SurveyAnswerChoice.option_id)
                         .where(SurveyAnswerChoice.answer_id == answer.id)
                     )
-                    choices = choices_result.scalars().all()
-                    values = [choice.value for choice in choices]
+                    choices_rows = choices_result.all()
+
+                    values = []
+                    for choice, answer_choice in choices_rows:
+                        val = choice.value
+                        # 拼接 custom_value，当 is_other 为 True 时
+                        if choice.is_other and answer_choice.custom_value:
+                            val += f" {answer_choice.custom_value}"
+                        values.append(val)
                     row.append(", ".join(values) if values else "")
                 elif question.type == "text":
                     row.append(answer.answer_text or "")
+                elif question.type == "meta_data":
+                    # 直接输出文本回答，或者自定义字段值
+                    # 假设 meta_data 类型存放在 answer_text 中，也可根据实际调整
+                    val = answer.answer_text or ""
+                    # 如果有 rating 或其他类型，可以根据需要处理
+                    row.append(val)
                 else:
                     row.append("")
             else:
                 row.append("")
         ws.append(row)
+
+    # 自动调整列宽
     for column in ws.columns:
         max_length = 0
         column_letter = openpyxl.utils.get_column_letter(column[0].column)
         for cell in column:
             try:
-                if len(str(cell.value)) > max_length:
-                    max_length = len(str(cell.value))
+                if cell.value:
+                    max_length = max(max_length, len(str(cell.value)))
             except:
                 pass
-        adjusted_width = (max_length + 2)
+        adjusted_width = max_length + 2
         ws.column_dimensions[column_letter].width = adjusted_width
+
     output = BytesIO()
     wb.save(output)
     output.seek(0)
+
     return StreamingResponse(
         output,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
