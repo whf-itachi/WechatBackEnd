@@ -98,7 +98,7 @@ async def get_attachments_by_issue(request_data: FileIdsRequest, db: AsyncSessio
     # return {"attachments": attachments}
 
 
-# 通过附件id查询附件预览
+# 通过附件id查询附件预览 （暂时废弃了，使用静态文件直接访问）
 @router.get("/attachment/preview/{attachment_id}")
 async def preview_attachment(attachment_id: int, db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(Attachment).where(Attachment.id == attachment_id))
