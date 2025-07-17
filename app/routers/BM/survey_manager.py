@@ -5,7 +5,7 @@ import openpyxl
 from openpyxl.styles import Font
 from fastapi import APIRouter, Depends, HTTPException, status, Request, Query
 from fastapi.responses import StreamingResponse
-from sqlalchemy import select, func
+from sqlalchemy import select, func, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload, selectinload
 
@@ -13,7 +13,8 @@ import qrcode
 from io import BytesIO
 from app.db_services.database import get_db
 from app.logger import get_logger
-from app.models.survey import SurveyTable, SurveyQuestion, SurveyOption, SurveyResponse, SurveyAnswer, SurveyAnswerChoice
+from app.models.survey import SurveyTable, SurveyQuestion, SurveyOption, SurveyResponse, SurveyAnswer, \
+    SurveyAnswerChoice, SurveySummaryTable, SurveySummaryLinks
 from app.schemas.survey_schema import *
 
 router = APIRouter()
@@ -208,7 +209,6 @@ async def list_surveys(skip: int = 0, limit: int = 10, db: AsyncSession = Depend
             "id": survey.id,
             "title": survey.title,
             "description": survey.description,
-            "is_active": True,  # 新模型SurveyTable无is_active字段，默认True
             "current_responses": survey.current_responses,
             "expire_at": survey.expire_at,
             "created_at": survey.created_at,
@@ -333,7 +333,6 @@ async def update_survey(survey_id: int, survey_data: SurveyUpdate, db: AsyncSess
             "id": survey.id,
             "title": survey.title,
             "description": survey.description,
-            "is_active": True,
             "current_responses": survey.current_responses,
             "created_at": survey.created_at,
             "updated_at": survey.updated_at
@@ -613,4 +612,175 @@ async def export_survey_data_excel(
         headers={
             "Content-Disposition": f"attachment; filename=survey_{survey_id}_data.xlsx"
         }
+    )
+
+
+# ---------------------------------------------- 汇总问卷功能 ----------------------------------------------
+
+# 查询所有汇总问卷列表
+@router.get("/survey_summary/", response_model=Dict[str, Union[int, List[SummaryOut]]])
+async def survey_summary_list(
+    skip: int = 0,
+    limit: int = 10,
+    db: AsyncSession = Depends(get_db)
+):
+    # 查询总数
+    count_stmt = select(func.count()).select_from(SurveySummaryTable)
+    total_result = await db.execute(count_stmt)
+    total = total_result.scalar_one()
+
+    # 查询分页数据
+    result = await db.execute(
+        select(SurveySummaryTable)
+        .order_by(SurveySummaryTable.id.desc())
+        .offset(skip)
+        .limit(limit)
+    )
+    summaries = result.scalars().all()
+
+    summary_list = []
+    for summary in summaries:
+        survey_ids = [str(link.survey_id) for link in summary.relations]
+        survey_id_str = ",".join(survey_ids)
+
+        summary_data = {
+            "id": summary.id,
+            "name": summary.name,
+            "description": summary.description,
+            "survey_ids": survey_id_str,
+            "created_at": summary.created_at,
+        }
+        summary_list.append(SummaryOut(**summary_data))
+
+    return {
+        "total": total,
+        "items": summary_list
+    }
+
+
+# 创建新的汇总问卷
+@router.post("/survey_summary/", response_model=SummaryDetailOut)
+async def create_summary(
+    data: SummaryCreateIn,
+    db: AsyncSession = Depends(get_db)
+):
+    # 插入主表
+    new_summary = SurveySummaryTable(
+        name=data.name,
+        description=data.description
+    )
+    db.add(new_summary)
+    await db.flush()
+
+    # 插入关联表
+    for relation in data.relations:
+        db_relation = SurveySummaryLinks(
+            summary_id=new_summary.id,
+            survey_id=relation.survey_id,
+            description=relation.description
+        )
+        db.add(db_relation)
+
+    await db.commit()
+    await db.refresh(new_summary)
+
+    # 查询完整数据并预加载 relations
+    result = await db.execute(
+        select(SurveySummaryTable)
+        .options(selectinload(SurveySummaryTable.relations))
+        .where(SurveySummaryTable.id == new_summary.id)
+    )
+    summary = result.scalars().first()
+
+    return SummaryDetailOut(
+        id=summary.id,
+        name=summary.name,
+        description=summary.description,
+        created_at=summary.created_at,
+        relations=[
+            SummaryRelationOut.model_validate(r) for r in summary.relations
+        ]
+    )
+
+
+# 根据指定id修改汇总问卷
+@router.put("/survey_summary/{id}", response_model=SummaryDetailOut)
+async def update_summary(
+    id: int,
+    data: SummaryUpdateIn,
+    db: AsyncSession = Depends(get_db)
+):
+    # 查询现有记录
+    result = await db.execute(
+        select(SurveySummaryTable).where(SurveySummaryTable.id == id)
+    )
+    summary = result.scalars().first()
+
+    if not summary:
+        raise HTTPException(status_code=404, detail="未找到该汇总问卷")
+
+    # 更新主表字段
+    if data.name:
+        summary.name = data.name
+    if data.description is not None:
+        summary.description = data.description
+
+    # 更新关联关系（可选）
+    if data.relations is not None:
+        # 删除旧的关联
+        await db.execute(
+            delete(SurveySummaryLinks).where(SurveySummaryLinks.summary_id == id)
+        )
+
+        # 添加新的关联
+        for relation in data.relations:
+            db_relation = SurveySummaryLinks(
+                summary_id=id,
+                related_file_id=relation.related_file_id,
+                description=relation.description
+            )
+            db.add(db_relation)
+
+    await db.commit()
+    await db.refresh(summary)
+
+    # 查询更新后的完整数据
+    result = await db.execute(
+        select(SurveySummaryTable).where(SurveySummaryTable.id == id)
+    )
+    updated_summary = result.scalars().first()
+
+    return SummaryDetailOut(
+        id=updated_summary.id,
+        name=updated_summary.name,
+        description=updated_summary.description,
+        created_at=updated_summary.created_at,
+        relations=[
+            SummaryRelationOut.from_orm(r) for r in updated_summary.relations
+        ]
+    )
+
+
+# 查询指定id汇总问卷信息
+@router.get("/survey_summary/{id}", response_model=SummaryDetailOut)
+async def get_summary_by_id(
+    id: int,
+    db: AsyncSession = Depends(get_db)
+):
+    result = await db.execute(
+        select(SurveySummaryTable).where(SurveySummaryTable.id == id)
+    )
+    summary = result.scalars().first()
+
+    if not summary:
+        raise HTTPException(status_code=404, detail="未找到该汇总问卷")
+
+    return SummaryDetailOut(
+        id=summary.id,
+        name=summary.name,
+        description=summary.description,
+        created_at=summary.created_at,
+        relations=[
+            SummaryRelationOut.from_orm(r) for r in summary.relations
+        ]
     )

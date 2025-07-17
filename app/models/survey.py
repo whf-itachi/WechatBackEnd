@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import Optional, List
 
 from sqlmodel import SQLModel, Field, Relationship
-from sqlalchemy import Column, DateTime, func
+from sqlalchemy import Column, DateTime, func, UniqueConstraint
 
 
 # ————————————————————————
@@ -127,3 +127,36 @@ class SurveyAnswerChoice(SQLModel, table=True):
 
     answer: "SurveyAnswer" = Relationship(back_populates="selected_options")
     option: "SurveyOption" = Relationship(back_populates="answer_choices")
+
+
+# ————————————————————————
+# 7. 多个问卷汇总问卷表
+# ————————————————————————
+class SurveySummaryTable(SQLModel, table=True):
+    __tablename__ = "survey_summary_tables"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    name: str = Field(max_length=255)  # 汇总表的名称
+    description: Optional[str] = Field(default=None)  # 描述
+    created_at: datetime = Field(sa_column=Column(DateTime, server_default=func.now()))  # 创建时间
+
+    relations: List["SurveySummaryLinks"] = Relationship(back_populates="summary",
+                                                         sa_relationship_kwargs={"lazy": "selectin"})
+
+
+# ————————————————————————
+# 8. 汇总问卷关联关系表
+# ————————————————————————
+class SurveySummaryLinks(SQLModel, table=True):
+    __tablename__ = "survey_summary_links"
+    __table_args__ = (
+        UniqueConstraint("summary_id", "survey_id", name="uq_summary_survey"),
+    )
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    summary_id: int = Field(foreign_key="survey_summary_tables.id")
+    survey_id: int = Field(foreign_key="surveys.id")
+    description: Optional[str] = None
+
+    summary: SurveySummaryTable = Relationship(back_populates="relations")
+

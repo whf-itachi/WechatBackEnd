@@ -143,3 +143,38 @@ class ResponseItem(BaseModel):
 class ResponseList(BaseModel):
     total: int
     items: List[ResponseItem]
+
+
+class SummaryOut(BaseModel):
+    id: int
+    name: str
+    description: Optional[str] = None
+    survey_ids: Optional[str] = None
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class SummaryDetailOut(SummaryOut):
+    relations: List["SummaryRelationOut"]
+
+
+class SummaryRelationOut(BaseModel):
+    survey_id: int
+    description: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+
+class SummaryCreateIn(BaseModel):
+    name: str
+    description: Optional[str] = None
+    relations: List[SummaryRelationOut]
+
+
+class SummaryUpdateIn(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    relations: Optional[List[SummaryRelationOut]] = None
