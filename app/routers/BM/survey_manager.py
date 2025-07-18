@@ -437,6 +437,9 @@ async def submit_response(
 # ———————————————— 生成问卷二维码 ————————————————
 @router.get("/{survey_id}/qr")
 async def generate_qr(request: Request, survey_id: int):
+    """
+    问卷二维码
+    """
     base_url = str(request.base_url)
     if "8000" in base_url:
         base_url = "http://localhost:5173/"
@@ -449,6 +452,22 @@ async def generate_qr(request: Request, survey_id: int):
     img_bytes.seek(0)
     return StreamingResponse(img_bytes, media_type="image/png")
 
+@router.get("/summary/detail/{summary_id}/qr")
+async def generate_qr(request: Request, summary_id: int):
+    """
+    汇总问卷二维码
+    """
+    base_url = str(request.base_url)
+    if "8000" in base_url:
+        base_url = "http://localhost:5173/"
+    url = f"{base_url}survey/summary/detail/{summary_id}"
+    qr = qrcode.QRCode(version=1, box_size=10, border=4)
+    qr.add_data(url)
+    img = qr.make_image(fill_color="black", back_color="white")
+    img_bytes = BytesIO()
+    img.save(img_bytes, format='PNG')
+    img_bytes.seek(0)
+    return StreamingResponse(img_bytes, media_type="image/png")
 
 # ———————————————— 问卷统计 ————————————————
 @router.get("/{survey_id}/statistics")
