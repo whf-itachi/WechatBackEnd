@@ -460,7 +460,7 @@ async def generate_qr(request: Request, summary_id: int):
     base_url = str(request.base_url)
     if "8000" in base_url:
         base_url = "http://localhost:5173/"
-    url = f"{base_url}survey/summary/detail/{summary_id}"
+    url = f"{base_url}summary/fill/{summary_id}"
     qr = qrcode.QRCode(version=1, box_size=10, border=4)
     qr.add_data(url)
     img = qr.make_image(fill_color="black", back_color="white")
