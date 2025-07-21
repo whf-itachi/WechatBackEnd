@@ -755,7 +755,7 @@ async def update_summary(
         for relation in data.relations:
             db_relation = SurveySummaryLinks(
                 summary_id=id,
-                related_file_id=relation.related_file_id,
+                survey_id=relation.survey_id,
                 description=relation.description
             )
             db.add(db_relation)
@@ -768,14 +768,13 @@ async def update_summary(
         select(SurveySummaryTable).where(SurveySummaryTable.id == id)
     )
     updated_summary = result.scalars().first()
-
     return SummaryDetailOut(
         id=updated_summary.id,
         name=updated_summary.name,
         description=updated_summary.description,
         created_at=updated_summary.created_at,
         relations=[
-            SummaryRelationOut.from_orm(r) for r in updated_summary.relations
+            SummaryRelationOut.model_validate(r) for r in updated_summary.relations
         ]
     )
 
@@ -800,6 +799,6 @@ async def get_summary_by_id(
         description=summary.description,
         created_at=summary.created_at,
         relations=[
-            SummaryRelationOut.from_orm(r) for r in summary.relations
+            SummaryRelationOut.model_validate(r) for r in summary.relations
         ]
     )
