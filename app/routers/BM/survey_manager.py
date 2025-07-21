@@ -560,11 +560,13 @@ async def export_survey_data_excel(
 
     # 添加表头
     headers = [question.text for question in questions]
+    headers.append("提交时间")
     ws.append(headers)
     for cell in ws[1]:
         cell.font = Font(bold=True)
 
     for response in responses:
+        submit_time = response.submitted_at
         row = []
         for question in questions:
             answer_result = await db.execute(
@@ -606,6 +608,7 @@ async def export_survey_data_excel(
                     row.append("")
             else:
                 row.append("")
+        row.append(submit_time)
         ws.append(row)
 
     # 自动调整列宽
