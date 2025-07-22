@@ -76,7 +76,7 @@ async def get_attachments_by_issue(request_data: FileIdsRequest, db: AsyncSessio
             "file_path": attachment.file_path,
             "attachment_id": attachment.id
         }
-        if attachment.file_type == "image/png":
+        if attachment.file_type in ["image/png", "image/jpeg"]:
             # 添加缩咯图信息
             f_name, _ = os.path.splitext(attachment.file_name)  # 分割扩展名
             attachment_name = f_name + "_" + size + ".jpg"
