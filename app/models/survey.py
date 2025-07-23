@@ -13,7 +13,8 @@ class SurveyTable(SQLModel, table=True):
 
     id: Optional[int] = Field(default=None, primary_key=True)
     title: str = Field(max_length=255)
-    description: Optional[str] = Field(default=None)
+    # description: Optional[str] = Field(default=None)
+    description: Optional[str] = Field(default=None, max_length=1000)  # 增加最大长度
     current_responses: int = Field(default=0)
 
     created_at: datetime = Field(sa_column=Column(DateTime, server_default=func.now()))
