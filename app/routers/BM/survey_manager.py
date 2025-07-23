@@ -289,6 +289,7 @@ async def get_survey(survey_id: int, db: AsyncSession = Depends(get_db)):
                 "id": q.id,
                 "text": q.text,
                 "type": q.type,
+                "required": q.required,
                 "options": [
                     {
                         "id": o.id,
