@@ -62,7 +62,7 @@ async def survey_responses_list(
     items = []
     for response in responses:
         metadata_answers = {
-            answer.question.text: answer.answer_text
+            answer.question.text: (answer.answer_text or "")
             for answer in response.answers
             if answer.question.type == "meta_data"
         }
