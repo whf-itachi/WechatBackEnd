@@ -4,24 +4,69 @@ from sqlmodel import SQLModel, Field, Relationship
 from sqlalchemy import Text
 
 
+# 客户公司信息表
+class Customer(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    customer: str = Field(max_length=100,unique=True,nullable=False,description="客户公司名称，唯一")
+    contact_info: Optional[str] = Field(max_length=20, description="公司联系电话")
+    email: Optional[str] = Field(max_length=100, description="公司邮箱")
+    created_at: datetime = Field(default_factory=datetime.now)
+    # 反向关系：该公司下的所有工厂/客户; 删除客户同时删除客户名下的工厂信息
+    factories: List["Factory"] = Relationship(back_populates="customer", cascade_delete=True)
+
+
+# 设备部署工厂表
+class Factory(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    factory_name: str = Field(max_length=200, unique=True, nullable=False, description="工厂名称")
+    address: Optional[str] = Field(default=None, max_length=300, description="工厂地址")
+    remarks: Optional[str] = Field(max_length=500,description="备注信息")
+    created_at: datetime = Field(default_factory=datetime.now)
+
+    customer_id: int = Field(foreign_key="customer.id", ondelete="CASCADE")
+
+    # 正向关系：指向公司
+    customer: Customer = Relationship(back_populates="factories")
+    # 反向关系：该客户拥有的所有设备
+    devices: List["DeviceTable"] = Relationship(back_populates="factory", cascade_delete=True)
+
+
+# 设备型号表
 class DeviceModel(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     device_model: str = Field(max_length=100, unique=True, nullable=False)
 
     created_at: datetime = Field(default_factory=datetime.now)
+    # 反向关系：该型号对应的所有设备
+    devices: List["DeviceTable"] = Relationship(back_populates="model", cascade_delete=True)
 
 
-class Customer(SQLModel, table=True):
+# 设备信息表
+class DeviceTable(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
-    customer: str = Field(max_length=200, unique=True, nullable=False)
+    device_name: str = Field(max_length=50, unique=True, nullable=False,  description="设备编号")
+    device_type: str = Field(max_length=100, description="设备类型")
+    processing_range: Optional[str] = Field(max_length=255,description="加工范围描述")
+    remarks: Optional[str] = Field(max_length=500,description="备注信息")
     created_at: datetime = Field(default_factory=datetime.now)
 
+    # 删除设备型号，联级删除所有该型号设备
+    device_model_id: int = Field(foreign_key="devicemodel.id", ondelete="CASCADE")
+    # 删除工厂，设备工厂id字段为null
+    factory_id: Optional[int] = Field(foreign_key="factory.id", ondelete="SET NULL")
 
+    # 关系
+    model: DeviceModel = Relationship(back_populates="devices")
+    factory: Optional["Factory"] = Relationship(back_populates="devices")
+
+
+# 工单附件关系表
 class TicketAttachmentLink(SQLModel, table=True):
     ticket_id: int = Field(foreign_key="ticket.id", primary_key=True)
     attachment_id: int = Field(foreign_key="attachment.id", primary_key=True)
 
 
+# 附件表
 class Attachment(SQLModel, table=True):
     """附件表"""
     id: Optional[int] = Field(default=None, primary_key=True)
@@ -36,6 +81,7 @@ class Attachment(SQLModel, table=True):
     )
 
 
+# 工单表
 class Ticket(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     user_id: int = Field(foreign_key="user.id")
@@ -60,6 +106,7 @@ class Ticket(SQLModel, table=True):
     histories: List["TicketHistory"] = Relationship(back_populates="ticket")
 
 
+# 工单修改历史记录表
 class TicketHistory(SQLModel, table=True):
     """问题单修改记录表"""
     id: Optional[int] = Field(default=None, primary_key=True)
