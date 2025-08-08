@@ -214,7 +214,7 @@ async def get_device_list(
         result = await db.execute(query)
         devices = result.scalars().all()
 
-        return {"data": {"devices": devices, "total": total}}
+        return {"data": {"items": devices, "total": total}}
     except Exception as e:
         logger.error(f"查询设备列表失败: {str(e)}")
         return ErrorResponse(code=500, message="服务器内部错误", detail=str(e))
