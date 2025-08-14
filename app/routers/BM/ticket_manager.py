@@ -1,16 +1,17 @@
 from fastapi import APIRouter, HTTPException, Depends, status, UploadFile, File, Form, Body, BackgroundTasks
 from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi.responses import FileResponse
+from sqlalchemy.orm import selectinload
+
 from app.db_services.database import get_db
 from app.dependencies.BM_auth import bm_verify_token
 from app.services.baiLian_service import process_full_rag_upload
 from app.schemas.ticket_schema import TicketResponse, TicketCreate
 from app.models.user import User
-from typing import List, Optional
 from app.logger import get_logger
 import os
-from app.models.ticket import Ticket, Attachment, TicketAttachmentLink
-from sqlalchemy import select
+from app.models.ticket import *
+from sqlalchemy import select, func
 import json
 
 from app.services.ticket_service import delete_attachment_by_id, delete_ticket_service, handle_attachment_files
@@ -24,20 +25,26 @@ logger = get_logger('ticket_router')
 # 创建工单
 @router.post("/submit")
 async def create_ticket_json(
-        background_tasks: BackgroundTasks,
-        ticket_data: TicketCreate = Body(...),
-        db: AsyncSession = Depends(get_db),
-        token_payload: dict = Depends(bm_verify_token)
+    background_tasks: BackgroundTasks,
+    ticket_data: TicketCreate = Body(...),
+    db: AsyncSession = Depends(get_db),
+    token_payload: dict = Depends(bm_verify_token)
 ):
     """创建工单（接收 JSON）"""
-    logger.info(f"开始创建工单: {ticket_data.device_model}")
+    logger.info(f"开始创建工单: 设备ID={ticket_data.device_id}")
     try:
         current_user = await get_user_by_id(db, token_payload.get("user_id"))
 
+        # 查询设备是否存在
+        stmt = select(DeviceTable).where(DeviceTable.id == ticket_data.device_id)
+        result = await db.execute(stmt)
+        device = result.scalar_one_or_none()
+        if not device:
+            raise HTTPException(status_code=400, detail="设备不存在")
+
         # 创建工单对象
         ticket = Ticket(
-            device_model=ticket_data.device_model,
-            customer=ticket_data.customer,
+            device_id=ticket_data.device_id,
             fault_phenomenon=ticket_data.fault_phenomenon,
             fault_reason=ticket_data.fault_reason,
             handling_method=ticket_data.handling_method,
@@ -46,11 +53,18 @@ async def create_ticket_json(
         )
         db.add(ticket)
         await db.commit()
+        await db.refresh(ticket)
 
+        # 可选：RAG 文档生成（可继续使用 ticket.id 生成内容）
         row_data = ticket.model_dump()
+        row_data.update({
+            "device_name": device.device_name,
+            "device_model": device.model.device_model,
+            "customer": device.factory.customer.customer,
+            "address": device.factory.address,
+        })
         content = '\n'.join(f'{key}: {value}' for key, value in row_data.items())
         file_bytes = content.encode('utf-8')
-
         dict_data = {
             "id": ticket.id,
             "f_type": "ticket",
@@ -61,111 +75,138 @@ async def create_ticket_json(
         logger.info(f"工单创建成功: {ticket.id}")
         return {"message": "工单创建成功", "ticket_id": ticket.id}
 
+    except HTTPException as e:
+        raise e
     except Exception as e:
         logger.error(f"工单创建失败: {str(e)}", exc_info=True)
         await db.rollback()
-        raise HTTPException(
-            status_code=500,
-            detail="工单创建失败"
-        )
+        raise HTTPException(status_code=500, detail="工单创建失败")
 
 
 
-# 查询所有工单
+# 查询所有工单（分页查询）
 @router.get("/list")
 async def get_tickets(
-        page: int = 1,
-        page_size: int = 10,
-        device_model: str= "",
-        creator: str= "",
-        db: AsyncSession = Depends(get_db),
-        token_payload: dict = Depends(bm_verify_token)
+    page: int = 1,
+    page_size: int = 10,
+    device_model: str = "",
+    creator: str = "",
+    db: AsyncSession = Depends(get_db),
+    token_payload: dict = Depends(bm_verify_token),
 ):
-    """查询所有工单"""
-    current_user = await get_user_by_id(db, token_payload.get("user_id"))
-    logger.info(f"查询所有工单 请求，当前用户: {current_user.id}")
+    """查询所有工单（支持分页、按设备型号、创建人过滤）"""
     try:
-        # 构建查询条件
-        query = select(Ticket)
+        current_user = await get_user_by_id(db, token_payload.get("user_id"))
+        logger.info(f"查询所有工单 请求，当前用户: {current_user.id}")
+        base_query = (
+            select(Ticket, User.name.label("creator_name"))
+            .join(User, Ticket.user_id == User.id)
+            .join(DeviceTable, Ticket.device_id == DeviceTable.id)
+            .join(DeviceModel, DeviceTable.device_model_id == DeviceModel.id)
+            .options(
+                selectinload(Ticket.device).selectinload(DeviceTable.model),
+                selectinload(Ticket.device)
+                .selectinload(DeviceTable.factory)
+                .selectinload(Factory.customer),
+            )
+        )
 
+        # 过滤条件
+        filters = []
         if device_model:
-            query = query.where(Ticket.device_model.ilike(f"%{device_model}%"))
-
+            filters.append(DeviceModel.device_model.ilike(f"%{device_model}%"))
         if creator:
-            # 通过 user_id 获取 creator 对应的用户
-            creator_user = await db.execute(select(User).where(User.name.ilike(f"%{creator}%")))
-            creator_user = creator_user.scalars().all()
-            if creator_user:
-                user_ids = [user.id for user in creator_user]
-                query = query.where(Ticket.user_id.in_(user_ids))
+            filters.append(User.name.ilike(f"%{creator}%"))
+        if filters:
+            base_query = base_query.where(*filters)
 
-        # 获取总工单数
-        total_count_result = await db.execute(query)
-        total_count = len(total_count_result.scalars().all())
+        # 统计总数
+        count_query = (
+            select(func.count(Ticket.id))
+            .join(User, Ticket.user_id == User.id)
+            .join(DeviceTable, Ticket.device_id == DeviceTable.id)
+            .join(DeviceModel, DeviceTable.device_model_id == DeviceModel.id)
+        )
+        if filters:
+            count_query = count_query.where(*filters)
 
-        # 查询分页工单
-        query = query.offset((page - 1) * page_size).limit(page_size)
+        total_count = (await db.execute(count_query)).scalar_one()
+
+        # 分页查询
+        query = (
+            base_query
+            .order_by(Ticket.create_at.desc())
+            .offset((page - 1) * page_size)
+            .limit(page_size)
+        )
+
         result = await db.execute(query)
-        tickets = result.scalars().all()
-
-        # 提取所有 user_id
-        user_ids = list(set(ticket.user_id for ticket in tickets if ticket.user_id))
-
-        # 批量查询用户信息
-        user_map = {}
-        if user_ids:
-            user_stmt = select(User).where(User.id.in_(user_ids))
-            user_result = await db.execute(user_stmt)
-            users = user_result.scalars().all()
-            user_map = {user.id: user.name for user in users}
+        rows = result.all()
 
         # 构建响应
         response_data = []
-        for ticket in tickets:
-            ticket_dict = {
+        for ticket, creator_name in rows:
+            device = ticket.device
+            model = device.model
+            factory = device.factory
+            customer = factory.customer if factory else None
+
+            response_data.append({
                 "id": ticket.id,
-                "device_model": ticket.device_model,
-                "customer": ticket.customer,
+                "device_id": device.id,
+                "device_name": device.device_name,
+                "device_model": model.device_model if model else "未知",
+                "customer": customer.customer if customer else "未知",
+                "address": factory.address if factory else None,
                 "fault_phenomenon": ticket.fault_phenomenon,
                 "fault_reason": ticket.fault_reason,
                 "handling_method": ticket.handling_method,
                 "handler": ticket.handler,
                 "user_id": ticket.user_id,
                 "status": ticket.status,
-                "creator": user_map.get(ticket.user_id, ""),  # 新增字段
-                "create_at": ticket.create_at
-            }
+                "creator": creator_name or "未知",
+                "create_at": ticket.create_at,
+            })
 
-            print(ticket_dict)
-            response_data.append(ticket_dict)
-
-        logger.info(f"成功获取工单列表，共 {len(tickets)} 条记录")
-        # 返回分页数据和总记录数
+        logger.info(f"成功获取工单列表，共 {len(response_data)} 条记录")
         return {"total_count": total_count, "tickets": response_data}
-    except HTTPException as e:
-        logger.error(f"获取工单列表失败 - HTTP异常: {str(e)}")
-        raise e
+
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"获取工单列表失败 - 系统异常: {str(e)}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"查询所有工单时发生错误: {str(e)}"
+            detail=f"查询所有工单时发生错误: {str(e)}",
         )
 
 
 # 根据工单 id 查询工单信息
 @router.get("/{ticket_id}", response_model=TicketResponse)
 async def get_ticket(
-        ticket_id: int,
-        db: AsyncSession = Depends(get_db),
-        token_payload: dict = Depends(bm_verify_token)
+    ticket_id: int,
+    db: AsyncSession = Depends(get_db),
+    token_payload: dict = Depends(bm_verify_token)
 ):
     """根据ID获取工单信息"""
     current_user = await get_user_by_id(db, token_payload.get("user_id"))
     logger.info(f"收到获取工单信息请求，工单ID: {ticket_id}，当前用户: {current_user.id}")
+
     try:
-        # 查询工单
-        stmt = select(Ticket).where(Ticket.id == ticket_id)
+        # 一次性加载工单 + 设备 + 型号 + 客户 + 附件
+        stmt = (
+            select(Ticket)
+            .where(Ticket.id == ticket_id)
+            .options(
+                selectinload(Ticket.device)
+                .selectinload(DeviceTable.model),
+                selectinload(Ticket.device)
+                .selectinload(DeviceTable.factory)
+                .selectinload(Factory.customer),
+                selectinload(Ticket.attachments)
+            )
+        )
+
         result = await db.execute(stmt)
         ticket = result.scalar_one_or_none()
 
@@ -175,31 +216,29 @@ async def get_ticket(
                 detail="未找到该工单"
             )
 
-        # 查询附件
-        stmt = select(Attachment).join(
-            TicketAttachmentLink,
-            Attachment.id == TicketAttachmentLink.attachment_id
-        ).where(TicketAttachmentLink.ticket_id == ticket_id)
+        # 处理附件
+        ticket_attachments = [
+            {
+                "id": att.id,
+                "file_path": att.file_path,
+                "file_type": att.file_type,
+                "upload_time": att.upload_time,
+                "file_name": att.file_name
+            }
+            for att in ticket.attachments
+        ]
 
-        result = await db.execute(stmt)
-        attachments = result.scalars().all()
-
-        # 处理附件信息
-        ticket_attachments = []
-        for attachment in attachments:
-            ticket_attachments.append({
-                "id": attachment.id,
-                "file_path": attachment.file_path,
-                "file_type": attachment.file_type,
-                "upload_time": attachment.upload_time,
-                "file_name": attachment.file_name
-            })
+        # 关联字段安全取值
+        device = ticket.device
+        model = device.model if device else None
+        factory = device.factory if device else None
+        customer = factory.customer if factory else None
 
         # 构建响应
         response_data = {
             "id": ticket.id,
-            "device_model": ticket.device_model,
-            "customer": ticket.customer,
+            "device_model": model.device_model if model else None,
+            "customer": customer.customer if customer else None,
             "fault_phenomenon": ticket.fault_phenomenon,
             "fault_reason": ticket.fault_reason,
             "handling_method": ticket.handling_method,
@@ -212,9 +251,10 @@ async def get_ticket(
 
         logger.info(f"成功获取工单信息: {ticket.id}")
         return response_data
+
     except HTTPException as e:
         logger.error(f"获取工单信息失败 - HTTP异常: {str(e)}")
-        raise e
+        raise
     except Exception as e:
         logger.error(f"获取工单信息失败 - 系统异常: {str(e)}", exc_info=True)
         raise HTTPException(
@@ -223,192 +263,185 @@ async def get_ticket(
         )
 
 
+
 # 根据工单 id 修改工单信息
 @router.put("/{ticket_id}", response_model=TicketResponse)
 async def update_ticket(
-        background_tasks: BackgroundTasks,
-        ticket_id: int,
-        device_model: str = Form(...),
-        customer: str = Form(...),
-        fault_phenomenon: str = Form(...),
-        fault_reason: Optional[str] = Form(None),
-        handling_method: Optional[str] = Form(None),
-        handler: Optional[str] = Form(None),
-        delete_list: Optional[str] = Form(None),  # 修改为字符串类型，前端传入JSON字符串
-        attachments: List[UploadFile] = File(None),
-        db: AsyncSession = Depends(get_db),
-        token_payload: dict = Depends(bm_verify_token)
+    background_tasks: BackgroundTasks,
+    ticket_id: int,
+    device_model: str = Form(...),
+    customer: str = Form(...),
+    fault_phenomenon: str = Form(...),
+    fault_reason: Optional[str] = Form(None),
+    handling_method: Optional[str] = Form(None),
+    handler: Optional[str] = Form(None),
+    delete_list: Optional[str] = Form(None),  # JSON字符串
+    attachments: Optional[List[UploadFile]] = File(None),
+    db: AsyncSession = Depends(get_db),
+    token_payload: dict = Depends(bm_verify_token)
 ):
-    """更新工单信息"""
-    # 打印入参
-    logger.info(f"更新工单入参: ticket_id={ticket_id}, device_model={device_model}, "
-                f"customer={customer}, fault_phenomenon={fault_phenomenon}, "
-                f"fault_reason={fault_reason}, handling_method={handling_method}, "
-                f"handler={handler}, delete_list={delete_list}, "
-                f"attachments数量={len(attachments) if attachments else 0}")
+    """
+    更新工单信息：
+    - 修改工单字段
+    - 删除指定附件
+    - 新增附件
+    - 更新大模型知识库文档
+    """
+    logger.info(
+        "更新工单: ticket_id=%s, device_model=%s, customer=%s, fault_phenomenon=%s, "
+        "fault_reason=%s, handling_method=%s, handler=%s, delete_list=%s, 附件数=%s",
+        ticket_id, device_model, customer, fault_phenomenon,
+        fault_reason, handling_method, handler, delete_list,
+        len(attachments) if attachments else 0
+    )
+
     current_user = await get_user_by_id(db, token_payload.get("user_id"))
-    logger.info(f"收到更新工单信息请求，工单ID: {ticket_id}，当前用户: {current_user.id}")
-    try:
-        # 解析delete_list
-        delete_list_ids = []
-        if delete_list:
-            try:
-                delete_list_ids = json.loads(delete_list)
-                if not isinstance(delete_list_ids, list):
-                    raise ValueError("delete_list must be a list")
-                delete_list_ids = [int(id) for id in delete_list_ids]
-            except (json.JSONDecodeError, ValueError) as e:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"Invalid delete_list format: {str(e)}"
-                )
 
-        # 获取当前工单信息
-        stmt = select(Ticket).where(Ticket.id == ticket_id)
-        result = await db.execute(stmt)
-        ticket = result.scalar_one_or_none()
-
-        if not ticket:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="未找到该工单"
-            )
-
-        # 更新工单基本信息
-        ticket.device_model = device_model
-        ticket.customer = customer
-        ticket.fault_phenomenon = fault_phenomenon
-        ticket.fault_reason = fault_reason
-        ticket.handling_method = handling_method
-        ticket.handler = handler or current_user.username
-        ticket.user_id = current_user.id
-
-        # 处理需要删除的附件
-        if delete_list_ids:
-            for attachment_id in delete_list_ids:
-                await delete_attachment_by_id(db, attachment_id)
-
-        # 处理新上传的附件
-        if attachments:
-            try:
-                # 附件验证、存储、缩咯图生成
-                await handle_attachment_files(db, ticket.id, attachments)
-            except Exception as e:
-                logger.error(f"附件保存出错: {e}", exc_info=True)
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="附件上传失败"
-                )
-
-        # 提交事务
+    # 解析 delete_list
+    delete_list_ids: List[int] = []
+    if delete_list:
         try:
-            await db.commit()
-        except Exception as e:
-            logger.error(f"修改工单报错：{e}")
-            await db.rollback()
+            parsed = json.loads(delete_list)
+            if not isinstance(parsed, list):
+                raise ValueError("delete_list 必须是列表")
+            delete_list_ids = [int(x) for x in parsed]
+        except (json.JSONDecodeError, ValueError) as e:
             raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="数据库提交失败"
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"delete_list 参数错误: {e}"
             )
 
-        # 构建响应
-        # 查询更新后的附件信息
-        stmt = select(Attachment).join(
-            TicketAttachmentLink,
-            Attachment.id == TicketAttachmentLink.attachment_id
-        ).where(TicketAttachmentLink.ticket_id == ticket_id)
+    # 查询工单
+    ticket = await db.scalar(select(Ticket).where(Ticket.id == ticket_id))
+    if not ticket:
+        raise HTTPException(status_code=404, detail="未找到该工单")
 
-        result = await db.execute(stmt)
-        attachments = result.scalars().all()
+    # 更新工单基本信息
+    ticket.fault_phenomenon = fault_phenomenon
+    ticket.fault_reason = fault_reason
+    ticket.handling_method = handling_method
+    ticket.handler = handler or current_user.username
+    ticket.user_id = current_user.id
 
-        # 处理附件信息
-        ticket_attachments = []
-        for attachment in attachments:
-            ticket_attachments.append({
-                "id": attachment.id,
-                "file_path": attachment.file_path,
-                "file_type": attachment.file_type,
-                "upload_time": attachment.upload_time,
-                "file_name": attachment.file_name
-            })
+    # 更新设备型号和客户信息
+    if ticket.device_id:
+        device = await db.scalar(select(DeviceTable).where(DeviceTable.id == ticket.device_id))
+        if device:
+            # 修改设备型号
+            model_obj = await db.scalar(select(DeviceModel).where(DeviceModel.id == device.device_model_id))
+            if model_obj:
+                model_obj.device_model = device_model
+            # 修改客户信息
+            if device.factory_id:
+                factory = await db.scalar(select(Factory).where(Factory.id == device.factory_id))
+                if factory:
+                    customer_obj = await db.scalar(select(Customer).where(Customer.id == factory.customer_id))
+                    if customer_obj:
+                        customer_obj.customer = customer
 
-        # 删除大模型文档
-        if ticket.file_id:
+    # 删除附件
+    if delete_list_ids:
+        for att_id in delete_list_ids:
             try:
-                bai_lian = BaiLian()
-                bai_lian.delete_rag_document(ticket.file_id)  # 删除文档
-                bai_lian.delete_rag_index(ticket.file_id)  # 删除知识库索引文档
+                await delete_attachment_by_id(db, att_id)
             except Exception as e:
-                logger.error(f"后台修改工单信息，删除大模型文档报错：{e}")
-        # 重新上传大模型文档并跟新file_id字段
-        row_data = ticket.model_dump()
-        content = '\n'.join(f'{key}: {value}' for key, value in row_data.items())
-        file_bytes = content.encode('utf-8')
+                logger.error("删除附件失败 id=%s: %s", att_id, e, exc_info=True)
+                raise HTTPException(status_code=400, detail=f"删除附件失败: {e}")
 
-        dict_data = {
-            "id": ticket.id,
-            "f_type": "ticket",
-            "file_name": f"ticket_{ticket.id}.txt"
-        }
+    # 新增附件
+    if attachments:
+        try:
+            await handle_attachment_files(db, ticket.id, attachments)
+        except Exception as e:
+            logger.error("附件保存出错: %s", e, exc_info=True)
+            raise HTTPException(status_code=400, detail="附件上传失败")
 
-        background_tasks.add_task(process_full_rag_upload, file_bytes, db, dict_data)
-        # 构建返回信息
-        response_data = {
-            "id": ticket.id,
-            "device_model": ticket.device_model,
-            "customer": ticket.customer,
-            "fault_phenomenon": ticket.fault_phenomenon,
-            "fault_reason": ticket.fault_reason,
-            "handling_method": ticket.handling_method,
-            "handler": ticket.handler,
-            "user_id": ticket.user_id,
-            "create_at": ticket.create_at,
-            "attachments": ticket_attachments
-        }
-
-        logger.info(f"成功更新工单信息: {ticket.id}")
-        return response_data
-    except HTTPException as e:
-        logger.error(f"更新工单信息失败 - HTTP异常: {str(e)}")
-        await db.rollback()
-        raise e
+    # 提交数据库变更
+    try:
+        await db.commit()
     except Exception as e:
-        logger.error(f"更新工单信息失败 - 系统异常: {str(e)}", exc_info=True)
+        logger.error("更新工单提交失败: %s", e, exc_info=True)
         await db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"更新工单信息时发生错误: {str(e)}"
-        )
+        raise HTTPException(status_code=500, detail="数据库提交失败")
+
+    # 查询最新附件信息
+    attachment_rows = await db.scalars(
+        select(Attachment)
+        .join(TicketAttachmentLink, Attachment.id == TicketAttachmentLink.attachment_id)
+        .where(TicketAttachmentLink.ticket_id == ticket_id)
+    )
+    ticket_attachments = [
+        {
+            "id": att.id,
+            "file_path": att.file_path,
+            "file_type": att.file_type,
+            "upload_time": att.upload_time,
+            "file_name": att.file_name
+        }
+        for att in attachment_rows
+    ]
+
+    # 处理大模型文档
+    try:
+        if ticket.file_id:
+            bai_lian = BaiLian()
+            bai_lian.delete_rag_document(ticket.file_id)
+            bai_lian.delete_rag_index(ticket.file_id)
+
+        # 重新生成知识库文档
+        row_data = ticket.model_dump()
+        content = '\n'.join(f"{k}: {v}" for k, v in row_data.items())
+        file_bytes = content.encode("utf-8")
+        dict_data = {"id": ticket.id, "f_type": "ticket", "file_name": f"ticket_{ticket.id}.txt"}
+        background_tasks.add_task(process_full_rag_upload, file_bytes, db, dict_data)
+    except Exception as e:
+        logger.error("更新工单时处理大模型文档失败: %s", e, exc_info=True)
+
+    logger.info("工单更新成功 id=%s", ticket.id)
+    return {
+        "id": ticket.id,
+        "device_model": device_model,
+        "customer": customer,
+        "fault_phenomenon": ticket.fault_phenomenon,
+        "fault_reason": ticket.fault_reason,
+        "handling_method": ticket.handling_method,
+        "handler": ticket.handler,
+        "user_id": ticket.user_id,
+        "create_at": ticket.create_at,
+        "attachments": ticket_attachments
+    }
+
 
 
 # 根据工单 id 删除工单
 @router.delete("/{ticket_id}")
 async def delete_ticket(
-        ticket_id: int,
-        db: AsyncSession = Depends(get_db),
-        token_payload: dict = Depends(bm_verify_token)
+    ticket_id: int,
+    db: AsyncSession = Depends(get_db),
+    token_payload: dict = Depends(bm_verify_token)
 ):
     """删除工单"""
     current_user = await get_user_by_id(db, token_payload.get("user_id"))
     logger.info(f"收到删除工单请求，工单ID: {ticket_id}，当前用户: {current_user.id}")
+
     try:
+        # 调用删除逻辑
         result = await delete_ticket_service(db, ticket_id)
-        logger.info(f"成功删除工单，工单ID: {ticket_id}")
         if not result:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="未找到该工单"
-            )
+            raise HTTPException(status_code=404, detail="未找到该工单")
+
+        await db.commit()
+        logger.info(f"成功删除工单，工单ID: {ticket_id}")
         return {"message": "工单删除成功"}
+
     except HTTPException as e:
-        logger.error(f"删除工单失败 - HTTP异常: {str(e)}")
-        raise e
+        logger.error(f"删除工单失败 - HTTP异常: {e.detail}")
+        raise
     except Exception as e:
         logger.error(f"删除工单失败 - 系统异常: {str(e)}", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"删除工单时发生错误: {str(e)}"
-        )
+        await db.rollback()
+        raise HTTPException(status_code=500, detail="删除工单时发生错误")
+
 
 
 @router.get("/files/preview")
