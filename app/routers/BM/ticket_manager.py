@@ -71,7 +71,7 @@ async def create_ticket_json(
             "file_name": f"ticket_{ticket.id}.txt"
         }
 
-        background_tasks.add_task(process_full_rag_upload, file_bytes, db, dict_data)
+        background_tasks.add_task(process_full_rag_upload, file_bytes, dict_data)
         logger.info(f"工单创建成功: {ticket.id}")
         return {"message": "工单创建成功", "ticket_id": ticket.id}
 
@@ -105,9 +105,7 @@ async def get_tickets(
             .join(DeviceModel, DeviceTable.device_model_id == DeviceModel.id)
             .options(
                 selectinload(Ticket.device).selectinload(DeviceTable.model),
-                selectinload(Ticket.device)
-                .selectinload(DeviceTable.factory)
-                .selectinload(Factory.customer),
+                selectinload(Ticket.device).selectinload(DeviceTable.factory).selectinload(Factory.customer),
             )
         )
 
@@ -133,12 +131,7 @@ async def get_tickets(
         total_count = (await db.execute(count_query)).scalar_one()
 
         # 分页查询
-        query = (
-            base_query
-            .order_by(Ticket.create_at.desc())
-            .offset((page - 1) * page_size)
-            .limit(page_size)
-        )
+        query = ( base_query.order_by(Ticket.create_at.desc()).offset((page - 1) * page_size).limit(page_size))
 
         result = await db.execute(query)
         rows = result.all()
@@ -194,18 +187,13 @@ async def get_ticket(
 
     try:
         # 一次性加载工单 + 设备 + 型号 + 客户 + 附件
-        stmt = (
-            select(Ticket)
-            .where(Ticket.id == ticket_id)
-            .options(
-                selectinload(Ticket.device)
-                .selectinload(DeviceTable.model),
-                selectinload(Ticket.device)
-                .selectinload(DeviceTable.factory)
-                .selectinload(Factory.customer),
+        stmt = (select(Ticket).where(Ticket.id == ticket_id)
+                .options(
+                selectinload(Ticket.device).selectinload(DeviceTable.model),
+                selectinload(Ticket.device).selectinload(DeviceTable.factory).selectinload(Factory.customer),
                 selectinload(Ticket.attachments)
+                )
             )
-        )
 
         result = await db.execute(stmt)
         ticket = result.scalar_one_or_none()
@@ -266,7 +254,7 @@ async def get_ticket(
 
 # 根据工单 id 修改工单信息
 @router.put("/{ticket_id}", response_model=TicketResponse)
-async def update_ticket(
+async def update_ticket(  # todo： 用 Pydantic 模型统一管理表单参数，仅保留路径参数、文件参数和依赖项
     background_tasks: BackgroundTasks,
     ticket_id: int,
     device_model: str = Form(...),
@@ -323,7 +311,7 @@ async def update_ticket(
     ticket.handler = handler or current_user.username
     ticket.user_id = current_user.id
 
-    # 更新设备型号和客户信息
+    # 更新设备型号和客户信息 todo:这里修改逻辑似乎有问题！
     if ticket.device_id:
         device = await db.scalar(select(DeviceTable).where(DeviceTable.id == ticket.device_id))
         if device:
@@ -393,7 +381,7 @@ async def update_ticket(
         content = '\n'.join(f"{k}: {v}" for k, v in row_data.items())
         file_bytes = content.encode("utf-8")
         dict_data = {"id": ticket.id, "f_type": "ticket", "file_name": f"ticket_{ticket.id}.txt"}
-        background_tasks.add_task(process_full_rag_upload, file_bytes, db, dict_data)
+        background_tasks.add_task(process_full_rag_upload, file_bytes, dict_data)
     except Exception as e:
         logger.error("更新工单时处理大模型文档失败: %s", e, exc_info=True)
 

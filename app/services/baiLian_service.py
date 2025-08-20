@@ -5,6 +5,7 @@ from h11 import ERROR
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
+from app.db_services.database import async_session_factory
 from app.logger import get_logger
 from app.models import Question, Ticket
 from app.models.rag import Documents
@@ -53,7 +54,7 @@ class BaiLianTaskRunner:
 
 
 # 上传并解析文件的总调用函数
-async def process_full_rag_upload(file_bytes: bytes, db: AsyncSession, dict_data: dict):
+async def process_full_rag_upload(file_bytes: bytes, dict_data: dict):
     try:
         bai_lian = BaiLian()
         file_name = dict_data.get("file_name")
@@ -61,16 +62,19 @@ async def process_full_rag_upload(file_bytes: bytes, db: AsyncSession, dict_data
         table_id = dict_data.get("id")
         bai_lian.tag = dict_data.get("tag")
 
-        file_obj = io.BytesIO(file_bytes)  # 后台再创建内存文件
+        file_obj = io.BytesIO(file_bytes)
 
         # 上传文档
         bai_lian.upload_rag_document(file_name, r_data=file_obj, f_type=f_type)
 
-        # 添加到知识库并修改解析状态
-        runner = BaiLianTaskRunner(bai_lian, db)
-        await runner.run(table_id=table_id, f_type=f_type)
+        # 关键：后台任务里新建一个 session
+        async with async_session_factory() as session:
+            runner = BaiLianTaskRunner(bai_lian, session)
+            await runner.run(table_id=table_id, f_type=f_type)
+
     except Exception as e:
-        logger.error(f"上传解析文档报错：{e}")
+        logger.error(f"上传解析文档报错：{e}", exc_info=True)
+
 
 
 # 删除大模型文档

@@ -51,31 +51,68 @@ class TicketCreate(SQLModel):
 
 
 class TicketUpdate(SQLModel):
-    """更新工单请求模型"""
-    device_id: int = Field(None, description="设备编号id")
-    # device_model: Optional[str] = Field(None, description="设备型号")
-    # customer: Optional[str] = Field(None, description="客户名称")
-    # address: Optional[str] = Field(None, description="设备地址")
-    fault_phenomenon: Optional[str] = Field(None, description="故障现象")
-    fault_reason: Optional[str] = Field(None, description="故障原因")
-    handling_method: Optional[str] = Field(None, description="处理方法")
-    handler: Optional[str] = Field(None, description="故障处理人")
-    # user_id: Optional[int] = Field(None, description="创建用户ID")
+    device_id: int
+    fault_phenomenon: str
+    fault_reason: Optional[str] = None
+    handling_method: Optional[str] = None
+    handler: Optional[str] = None
+    delete_list: Optional[List[int]] = None  # 前端传 JSON 数组
 
+
+class AttachmentOut(SQLModel):
+    id: int
+    file_path: str
+    file_type: str
+    upload_time: datetime
+    file_name: str
 
 class TicketResponse(SQLModel):
-    """工单响应模型"""
-    id: Optional[int] = Field(None, description="工单ID")
-    device_model: Optional[str] = Field(None, description="设备型号")
-    customer: Optional[str] = Field(None, description="客户名称")
-    address: Optional[str] = Field(None, description="设备地址")
-    fault_phenomenon: Optional[str] = Field(None, description="故障现象")
-    fault_reason: Optional[str] = Field(None, description="故障原因")
-    handling_method: Optional[str] = Field(None, description="处理方法")
-    handler: Optional[str] = Field(None, description="故障处理人")
-    user_id: Optional[int] = Field(None, description="创建用户ID")
-    status: Optional[int] = Field(0, description="工单处理状态")
-    create_at: Optional[datetime] = Field(None, description="创建时间")
-    attachments: List[AttachmentResponse] = Field(default=[], description="附件列表")
+    id: int
+    device_model: str
+    customer: str
+    address: str
+    fault_phenomenon: str
+    fault_reason: Optional[str]
+    handling_method: Optional[str]
+    handler: Optional[str]
+    user_id: int
+    create_at: datetime
+    attachments: List[AttachmentOut] = []
+
+
+class DeviceResponse(SQLModel):
+    id: int = Field(primary_key=True)
+    device_name: str
+    device_type: Optional[str] = None
+    processing_range: Optional[str] = None
+    create_at: Optional[datetime] = None
+
+
+# 基础设备信息模型
+class DeviceBase(SQLModel):
+    id: int
+    device_name: str
+    device_type: str
+    processing_range: Optional[str] = None
+    remarks: Optional[str] = None
+    created_at: datetime
+
+
+# 设备详情响应模型（继承基础模型并添加关联信息）
+class DeviceDetailResponse(DeviceBase):
+    # 设备型号信息
+    model_id: int
+    device_model: str
+
+    # 工厂信息
+    factory_id: Optional[int] = None
+    factory_name: Optional[str] = None
+    address: Optional[str] = None
+
+    # 客户信息
+    customer_id: Optional[int] = None
+    customer_name: Optional[str] = None
+    contact_info: Optional[str] = None
+    email: Optional[str] = None
 
     model_config = ConfigDict(from_attributes=True)

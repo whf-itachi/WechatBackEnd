@@ -73,7 +73,7 @@ async def update_question(
         "file_name": f"question_{question.id}.txt"
     }
 
-    background_tasks.add_task(process_full_rag_upload, file_bytes, db, dict_data)
+    background_tasks.add_task(process_full_rag_upload, file_bytes, dict_data)
 
     question.updated_at = datetime.now(timezone.utc)
     db.add(question)
@@ -130,7 +130,7 @@ async def add_rag_documents(background_tasks: BackgroundTasks,
         "tag": tag,
         "file_name": file.filename
     }
-    background_tasks.add_task(process_full_rag_upload, file_bytes, db, dict_data)
+    background_tasks.add_task(process_full_rag_upload, file_bytes, dict_data)
 
     return {"info": f"文件 {file.filename} 已成功上传", "document_id": new_document.id}
 
