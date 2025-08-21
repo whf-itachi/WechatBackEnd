@@ -161,3 +161,11 @@ class SurveySummaryLinks(SQLModel, table=True):
 
     summary: SurveySummaryTable = Relationship(back_populates="relations")
 
+
+# 工厂须知登记记录
+class FactoryNoticeHistory(SQLModel, table=True):
+    __tablename__ = "factory_notice_history"
+    id: Optional[int] = Field(primary_key=True)
+    company_name: str = Field(max_length=200, default=None)
+    contacts: str = Field(max_length=200, default=None)
+    created_at: datetime = Field(default_factory=datetime.now)

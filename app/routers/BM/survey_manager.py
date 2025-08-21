@@ -14,7 +14,7 @@ from io import BytesIO
 from app.db_services.database import get_db
 from app.logger import get_logger
 from app.models.survey import SurveyTable, SurveyQuestion, SurveyOption, SurveyResponse, SurveyAnswer, \
-    SurveyAnswerChoice, SurveySummaryTable, SurveySummaryLinks
+    SurveyAnswerChoice, SurveySummaryTable, SurveySummaryLinks, FactoryNoticeHistory
 from app.schemas.survey_schema import *
 
 router = APIRouter()
@@ -806,3 +806,42 @@ async def get_summary_by_id(
             SummaryRelationOut.model_validate(r) for r in summary.relations
         ]
     )
+
+
+@router.post("/factory_notice/submit", summary="提交工厂须知登记")
+async def submit_factory_notice(
+    notice_data: FactoryNoticeCreate,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    提交工厂须知登记信息，创建一条历史记录
+    """
+    try:
+        print("--------------<>")
+        # 创建新记录
+        new_record = FactoryNoticeHistory(
+            company_name=notice_data.company_name.strip(),
+            contacts=notice_data.contacts.strip(),
+            created_at=datetime.now()
+        )
+
+        db.add(new_record)
+        await db.commit()
+        await db.refresh(new_record)
+
+        return {
+            "message": "登记成功",
+            "data": {
+                "id": new_record.id,
+                "company_name": new_record.company_name,
+                "contacts": new_record.contacts,
+                "created_at": new_record.created_at.isoformat()
+            }
+        }
+
+    except Exception as e:
+        logger.error(f"提交工厂须知登记失败: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"确认提交失败: {str(e)}"
+        )

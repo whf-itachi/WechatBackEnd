@@ -178,3 +178,8 @@ class SummaryUpdateIn(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
     relations: Optional[List[SummaryRelationOut]] = None
+
+
+class FactoryNoticeCreate(BaseModel):
+    company_name: str
+    contacts: str
