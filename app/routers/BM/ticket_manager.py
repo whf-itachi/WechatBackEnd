@@ -226,6 +226,7 @@ async def get_ticket(
         response_data = {
             "id": ticket.id,
             "device_model": model.device_model if model else None,
+            "address": factory.address if factory else None,
             "customer": customer.customer if customer else None,
             "fault_phenomenon": ticket.fault_phenomenon,
             "fault_reason": ticket.fault_reason,
