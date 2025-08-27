@@ -48,6 +48,48 @@ async def get_devices(
         )
 
 
+@router.get("/devices/model_list", summary="获取设备型号列表及其设备")
+async def get_list_device_models_with_devices(db: AsyncSession = Depends(get_db)):
+    """
+    查询所有设备型号，并包含每个型号下的设备列表
+    返回结构：型号 -> 设备数组
+    """
+    try:
+        # 使用 joinedload 模拟（手动 join 查询）
+        result = await db.execute(
+            select(DeviceModel)
+            .options(selectinload(DeviceModel.devices))  # 推荐：用于一对多
+        )
+        models = result.unique().scalars().all()
+
+        # 手动序列化为 dict 结构（避免 ORM 模型直接暴露）
+        data = []
+        for model in models:
+            data.append({
+                "device_model": model.device_model,
+                "devices": [
+                    {
+                        "id": d.id,
+                        "device_name": d.device_name,
+                        "device_type": d.device_type
+                    }
+                    for d in model.devices  # 注意：这里 devices 是 relationship
+                ]
+            })
+
+        print("=======================")
+        print(data)
+
+        return data
+
+    except Exception as e:
+        logger.error(f"查询设备型号及设备列表失败: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"查询设备数据失败: {str(e)}"
+        )
+
+
 # 根据设备id查询设备详情
 @router.get("/devices/{device_id}", response_model=DeviceDetailResponse)
 async def get_device_detail(
@@ -358,7 +400,7 @@ async def get_my_tickets(
                     "file_path": attachment.file_path,
                     "file_type": attachment.file_type,
                     "upload_time": attachment.upload_time,
-                    "file_name": os.path.basename(attachment.file_path)
+                    "file_name": attachment.file_name
                 })
 
         # 构建响应
@@ -584,7 +626,7 @@ async def get_ticket(
             {
                 "id": att.id,
                 "file_path": att.file_path,
-                "file_name": os.path.basename(att.file_path),
+                "file_name": att.file_name,
                 "file_type": att.file_type,
                 "upload_time": att.upload_time
             }
@@ -746,6 +788,7 @@ async def update_ticket(
             "handling_method": ticket.handling_method,
             "handler": ticket.handler,
             "user_id": ticket.user_id,
+            "status": ticket.status,
             "create_at": ticket.create_at,
             "attachments": ticket_attachments
         }

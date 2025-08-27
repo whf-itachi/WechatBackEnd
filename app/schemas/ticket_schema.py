@@ -76,7 +76,7 @@ class TicketResponse(SQLModel):
     handling_method: Optional[str]
     handler: Optional[str]
     user_id: int
-    status: int
+    status: Optional[int]
     create_at: datetime
     attachments: List[AttachmentOut] = []
 
