@@ -36,7 +36,10 @@ async def create_ticket_json(
         current_user = await get_user_by_id(db, token_payload.get("user_id"))
 
         # 查询设备是否存在
-        stmt = select(DeviceTable).where(DeviceTable.id == ticket_data.device_id)
+        stmt = select(DeviceTable).where(DeviceTable.id == ticket_data.device_id).options(
+            selectinload(DeviceTable.model),  # 预加载model关联
+            selectinload(DeviceTable.factory).selectinload(Factory.customer)  # 预加载factory及其customer关联
+        )
         result = await db.execute(stmt)
         device = result.scalar_one_or_none()
         if not device:
