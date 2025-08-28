@@ -255,11 +255,9 @@ async def get_ticket(
 
 # 根据工单 id 修改工单信息
 @router.put("/{ticket_id}", response_model=TicketResponse)
-async def update_ticket(  # todo： 用 Pydantic 模型统一管理表单参数，仅保留路径参数、文件参数和依赖项
+async def update_ticket(
     background_tasks: BackgroundTasks,
     ticket_id: int,
-    device_model: str = Form(...),
-    customer: str = Form(...),
     fault_phenomenon: str = Form(...),
     fault_reason: Optional[str] = Form(None),
     handling_method: Optional[str] = Form(None),
@@ -277,10 +275,9 @@ async def update_ticket(  # todo： 用 Pydantic 模型统一管理表单参数�
     - 更新大模型知识库文档
     """
     logger.info(
-        "更新工单: ticket_id=%s, device_model=%s, customer=%s, fault_phenomenon=%s, "
+        "更新工单: ticket_id=%s, fault_phenomenon=%s, "
         "fault_reason=%s, handling_method=%s, handler=%s, delete_list=%s, 附件数=%s",
-        ticket_id, device_model, customer, fault_phenomenon,
-        fault_reason, handling_method, handler, delete_list,
+        ticket_id, fault_phenomenon, fault_reason, handling_method, handler, delete_list,
         len(attachments) if attachments else 0
     )
 
@@ -311,22 +308,6 @@ async def update_ticket(  # todo： 用 Pydantic 模型统一管理表单参数�
     ticket.handling_method = handling_method
     ticket.handler = handler or current_user.username
     ticket.user_id = current_user.id
-
-    # 更新设备型号和客户信息 todo:这里修改逻辑似乎有问题！
-    if ticket.device_id:
-        device = await db.scalar(select(DeviceTable).where(DeviceTable.id == ticket.device_id))
-        if device:
-            # 修改设备型号
-            model_obj = await db.scalar(select(DeviceModel).where(DeviceModel.id == device.device_model_id))
-            if model_obj:
-                model_obj.device_model = device_model
-            # 修改客户信息
-            if device.factory_id:
-                factory = await db.scalar(select(Factory).where(Factory.id == device.factory_id))
-                if factory:
-                    customer_obj = await db.scalar(select(Customer).where(Customer.id == factory.customer_id))
-                    if customer_obj:
-                        customer_obj.customer = customer
 
     # 删除附件
     if delete_list_ids:
@@ -389,8 +370,10 @@ async def update_ticket(  # todo： 用 Pydantic 模型统一管理表单参数�
     logger.info("工单更新成功 id=%s", ticket.id)
     return {
         "id": ticket.id,
-        "device_model": device_model,
-        "customer": customer,
+        "device_model": "",
+        "customer": "",
+        "address": "",
+        "status": 0,
         "fault_phenomenon": ticket.fault_phenomenon,
         "fault_reason": ticket.fault_reason,
         "handling_method": ticket.handling_method,
@@ -399,7 +382,6 @@ async def update_ticket(  # todo： 用 Pydantic 模型统一管理表单参数�
         "create_at": ticket.create_at,
         "attachments": ticket_attachments
     }
-
 
 
 # 根据工单 id 删除工单
