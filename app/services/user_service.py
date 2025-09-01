@@ -1,4 +1,4 @@
-from sqlalchemy import select
+from sqlalchemy import select, or_
 from passlib.context import CryptContext
 from datetime import timedelta
 import bcrypt
@@ -73,7 +73,10 @@ async def verify_user_login(session: AsyncSessionDep, login_data: UserLogin) -> 
         errors.append("密码不能为空")
         
     if not errors:
-        result = await session.execute(select(User).where(User.name == login_data.name))
+        result = await session.execute(
+            select(User).where(or_(User.name == login_data.name,User.phone == login_data.name))
+        )
+        # result = await session.execute(select(User).where(User.name == login_data.name))
         user_info = result.scalars().first()
         if not user_info:
             errors.append("用户不存在")
