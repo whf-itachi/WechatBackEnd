@@ -1,6 +1,7 @@
 from datetime import datetime
 from typing import Optional, List
 
+from fastapi.openapi.models import Operation
 from sqlmodel import SQLModel, Field, Relationship
 from sqlalchemy import Column, DateTime, func, UniqueConstraint
 
@@ -13,12 +14,12 @@ class SurveyTable(SQLModel, table=True):
 
     id: Optional[int] = Field(default=None, primary_key=True)
     title: str = Field(max_length=255)
-    # description: Optional[str] = Field(default=None)
-    description: Optional[str] = Field(default=None, max_length=1000)  # 增加最大长度
+    description: Optional[str] = Field(default=None, max_length=1000)
     current_responses: int = Field(default=0)
+    require_login: bool = Field(default=False, description="是否需要登录才能填写问卷")
 
     created_at: datetime = Field(sa_column=Column(DateTime, server_default=func.now()))
-    updated_at: datetime = Field(sa_column=Column(DateTime, server_default=func.now(), onupdate=func.now()))\
+    updated_at: datetime = Field(sa_column=Column(DateTime, server_default=func.now(), onupdate=func.now()))
 
     expire_at: Optional[datetime] = Field(
         default=None,
@@ -44,7 +45,7 @@ class SurveyQuestion(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     survey_id: int = Field(foreign_key="surveys.id")
     text: str
-    type: str = Field(max_length=50)  # single_choice, multiple_choice, rating, text, meta_data
+    type: str = Field(max_length=50)  # single_choice, multiple_choice, rating, text, meta_data, evaluate, target
     required: bool = Field(default=False)
 
     created_at: datetime = Field(sa_column=Column(DateTime, server_default=func.now()))
@@ -85,7 +86,7 @@ class SurveyResponse(SQLModel, table=True):
 
     id: Optional[int] = Field(default=None, primary_key=True)
     survey_id: int = Field(foreign_key="surveys.id")
-
+    temporary_token: Optional[str] = Field(default=None)  # 临时记录的令牌
     submitted_at: datetime = Field(sa_column=Column(DateTime, server_default=func.now()))
 
     survey: "SurveyTable" = Relationship(back_populates="responses")
@@ -95,22 +96,29 @@ class SurveyResponse(SQLModel, table=True):
     )
 
 
-# ————————————————————————
+# —————————————————————
 # 5. 答案表 (Answer)
-# ————————————————————————
+# —————————————————————
 class SurveyAnswer(SQLModel, table=True):
     __tablename__ = "survey_answers"
 
     id: Optional[int] = Field(default=None, primary_key=True)
-    response_id: int = Field(foreign_key="survey_responses.id")
-    question_id: int = Field(foreign_key="survey_questions.id")
+    response_id: int = Field(foreign_key="survey_responses.id")  # 哪个回答表
+    question_id: int = Field(foreign_key="survey_questions.id")  # 的哪个问题
 
+    # 普通答案内容
     answer_text: Optional[str] = None
     answer_rating: Optional[int] = None
 
+    # 关联关系
     response: "SurveyResponse" = Relationship(back_populates="answers")
     question: "SurveyQuestion" = Relationship(back_populates="answers")
     selected_options: List["SurveyAnswerChoice"] = Relationship(
+        back_populates="answer",
+        sa_relationship_kwargs={"cascade": "all, delete-orphan"}
+    )
+
+    assignments: List["SurveyEvaluationAssignment"] = Relationship(
         back_populates="answer",
         sa_relationship_kwargs={"cascade": "all, delete-orphan"}
     )
@@ -160,6 +168,33 @@ class SurveySummaryLinks(SQLModel, table=True):
     description: Optional[str] = None
 
     summary: SurveySummaryTable = Relationship(back_populates="relations")
+
+
+
+# —————————————————————
+# 9. 绩效评价任务表
+# —————————————————————
+class SurveyEvaluationAssignment(SQLModel, table=True):
+    __tablename__ = "survey_evaluation_assignments"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+
+    answer_id: int = Field(foreign_key="survey_answers.id")  # 关联哪一个答案
+    evaluator_name: str  # 评价者名称
+    evaluator_id: Optional[int] = None  # 提交者id
+    evaluation_score: Optional[int] = None  # 给出的评分
+    status: str = Field(default="pending")  # pending / completed
+
+    created_at: datetime = Field(
+        sa_column=Column(DateTime, server_default=func.now()),
+        description="创建时间"
+    )
+    updated_at: datetime = Field(
+        sa_column=Column(DateTime, server_default=func.now(), onupdate=func.now()),
+        description="更新时间"
+    )
+    # 关系
+    answer: "SurveyAnswer" = Relationship(back_populates="assignments")
 
 
 # 工厂须知登记记录

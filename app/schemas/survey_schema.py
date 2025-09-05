@@ -79,6 +79,9 @@ class AnswerSubmit(BaseModel):
 
 class ResponseSubmit(BaseModel):
     survey_id: int
+    evaluator_id: Optional[int] = None
+    evaluator_name: Optional[str] = None
+    temporary_token: str
     answers: List[AnswerSubmit]
 
 class AnswerOutFull(BaseModel):
@@ -183,3 +186,40 @@ class SummaryUpdateIn(BaseModel):
 class FactoryNoticeCreate(BaseModel):
     company_name: str
     contacts: str
+
+
+class EvaluationAssignmentOut(BaseModel):
+    id: int
+    answer_id: int
+    evaluator_id: Optional[int]
+    evaluator_name: str  # 评价者姓名字段
+    evaluation_score: Optional[int]
+    status: str
+    created_at: datetime
+
+    class Config:
+        orm_mode = True
+
+
+# Pydantic模型：创建单个评价任务的请求体
+class CreateEvaluationAssignment(BaseModel):
+    temporary_token: str  # 临时令牌
+    evaluator_name: str
+    question_id: int  # 要评价的问题ID
+    evaluation_score: int  # 给出的评分
+    evaluator_id: int  # 评价者ID
+
+
+# 请求体模型
+class ShareEvaluationIn(BaseModel):
+    temporary_token: str  # Redis存储的键名
+    question_id: int  # 问题ID
+    evaluator_name: str  # 评价者名称
+
+
+# 响应体模型
+class ShareEvaluationOut(BaseModel):
+    success: bool
+    message: str
+    data: Optional[dict] = None
+    created_at: datetime

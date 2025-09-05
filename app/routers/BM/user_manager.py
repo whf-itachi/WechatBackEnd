@@ -25,7 +25,7 @@ async def login_for_access_token(login_data: UserLogin, db: AsyncSession = Depen
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    return {"access_token": token, "token_type": "bearer"}
+    return {"access_token": token, "token_type": "bearer", "user_id":user.id, "username":user.name}
 
 
 # 登出接口
@@ -34,6 +34,32 @@ async def logout():
     """用户登出"""
     # 客户端收到响应后主动删除本地存储的JWT
     return {"message": "Logged out successfully"}
+
+# 注册用户
+@router.post("/register", response_model=UserResponse)
+async def register_user(user_data: UserCreate, db: AsyncSession = Depends(get_db)):
+    """用户注册"""
+    logger.info(f"收到用户注册请求: {user_data.model_dump()}")
+    try:
+        user, token = await create_user_service(db, user_data)
+        logger.info(f"用户注册成功: {user.model_dump()}")
+        return {
+            "user": user.model_dump(),
+            "token": token
+        }
+    except HTTPException as e:
+        logger.error(f"用户注册失败 - HTTP异常: {str(e)}")
+        raise e
+    except Exception as e:
+        logger.error(f"用户注册失败 - 系统异常: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "message": "注册失败",
+                "errors": [str(e)]
+            }
+        )
+
 
 
 # 查询所有用户接口

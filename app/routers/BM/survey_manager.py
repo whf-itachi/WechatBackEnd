@@ -13,8 +13,9 @@ import qrcode
 from io import BytesIO
 from app.db_services.database import get_db
 from app.logger import get_logger
+from app.models import User
 from app.models.survey import SurveyTable, SurveyQuestion, SurveyOption, SurveyResponse, SurveyAnswer, \
-    SurveyAnswerChoice, SurveySummaryTable, SurveySummaryLinks, FactoryNoticeHistory
+    SurveyAnswerChoice, SurveySummaryTable, SurveySummaryLinks, FactoryNoticeHistory, SurveyEvaluationAssignment
 from app.schemas.survey_schema import *
 
 router = APIRouter()
@@ -87,7 +88,10 @@ async def response_answer_detail(response_id: int, db: AsyncSession = Depends(ge
             joinedload(SurveyResponse.answers)
                 .joinedload(SurveyAnswer.selected_options)
                 .joinedload(SurveyAnswerChoice.option),
-            joinedload(SurveyResponse.answers).joinedload(SurveyAnswer.question)
+            joinedload(SurveyResponse.answers).joinedload(SurveyAnswer.question),
+            # 添加评价任务的关联加载
+            joinedload(SurveyResponse.answers)
+                .joinedload(SurveyAnswer.assignments)
         )
     )
     r = result.unique().scalar_one_or_none()
@@ -116,6 +120,22 @@ async def response_answer_detail(response_id: int, db: AsyncSession = Depends(ge
             elif q.type == "multiple_choice":
                 selected_option_ids = selected_ids
 
+        # 处理评价任务信息
+        evaluations = []
+        if a.assignments:
+            evaluations = [
+                EvaluationAssignmentOut(
+                    id=assignment.id,
+                    answer_id=assignment.answer_id,
+                    evaluator_name=assignment.evaluator_name,
+                    evaluator_id=assignment.evaluator_id,
+                    evaluation_score=assignment.evaluation_score,
+                    status=assignment.status,
+                    created_at=assignment.created_at
+                )
+                for assignment in a.assignments
+            ]
+
         answers_out.append(AnswerOutFull(
             question_id=q.id,
             question_text=q.text,
@@ -125,7 +145,8 @@ async def response_answer_detail(response_id: int, db: AsyncSession = Depends(ge
             answer_rating=a.answer_rating,
             selected_option_id=selected_option_id,
             selected_option_ids=selected_option_ids,
-            other_text=other_text or None
+            other_text=other_text or None,
+            evaluations=evaluations  # 添加评价信息
         ))
 
     return ResponseDetailOut(
@@ -136,7 +157,7 @@ async def response_answer_detail(response_id: int, db: AsyncSession = Depends(ge
     )
 
 
-
+# 问卷统计
 @router.get("/statistics/{survey_id}", response_model=SurveyStatisticsResponse)
 async def get_survey_statistics(survey_id: int, db: AsyncSession = Depends(get_db)):
     survey_result = await db.execute(
@@ -222,57 +243,8 @@ async def list_surveys(skip: int = 0, limit: int = 10, db: AsyncSession = Depend
     }
 
 
-# ———————————————— 创建问卷 ————————————————
-@router.post("/", response_model=SurveyOut)
-async def create_survey(survey_data: SurveyCreate, db: AsyncSession = Depends(get_db)):
-    try:
-        survey = SurveyTable(
-            title=survey_data.title,
-            description=survey_data.description,
-            expire_at=survey_data.expire_at,
-            current_responses=0
-        )
-        db.add(survey)
-        await db.flush()
-        for question_data in survey_data.questions:
-            question = SurveyQuestion(
-                survey_id=survey.id,
-                text=question_data.text,
-                type=question_data.type,
-                required=question_data.required
-            )
-            db.add(question)
-            await db.flush()
-            if question_data.type in ['single_choice', 'multiple_choice'] and question_data.options:
-                for option_data in question_data.options:
-                    option = SurveyOption(
-                        question_id=question.id,
-                        value=option_data.value,
-                        is_other=option_data.is_other
-                    )
-                    db.add(option)
-        await db.commit()
-        await db.refresh(survey)
-        survey_data = {
-            "id": survey.id,
-            "title": survey.title,
-            "description": survey.description,
-            "current_responses": survey.current_responses,
-            "created_at": survey.created_at,
-            "updated_at": survey.updated_at
-        }
-        return SurveyOut(**survey_data)
-    except Exception as e:
-        print(traceback.format_exc())
-        await db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"创建问卷失败: {str(e)}"
-        )
-
-
 # ———————————————— 获取单个问卷详情（含问题和选项） ————————————————
-@router.get("/{survey_id}", response_model=SurveyWithQuestions)
+@router.get("/{survey_id}")
 async def get_survey(survey_id: int, db: AsyncSession = Depends(get_db)):
     try:
         result = await db.execute(select(SurveyTable).where(SurveyTable.id == survey_id))
@@ -303,6 +275,7 @@ async def get_survey(survey_id: int, db: AsyncSession = Depends(get_db)):
         return {
                 "id": survey.id,
                 "title": survey.title,
+                "require_login": survey.require_login,
                 "description": survey.description,
                 "created_at": survey.created_at,
                 "updated_at": survey.updated_at,
@@ -359,82 +332,6 @@ async def delete_survey(survey_id: int, db: AsyncSession = Depends(get_db)):
     return
 
 
-# ———————————————— 提交问卷回答 ————————————————
-@router.post("/{survey_id}/responses")
-async def submit_response(
-    survey_id: int,
-    data: ResponseSubmit,
-    db: AsyncSession = Depends(get_db)
-):
-    # 检查问卷是否存在
-    result = await db.execute(select(SurveyTable).where(SurveyTable.id == survey_id))
-    survey = result.scalar_one_or_none()
-    if not survey:
-        raise HTTPException(status_code=404, detail="问卷不存在")
-
-    if survey.expire_at is not None and survey.expire_at < datetime.now():
-        raise HTTPException(
-            status_code=400,
-            detail="该问卷已过期，无法提交"
-        )
-
-    # 创建答卷记录
-    response = SurveyResponse(survey_id=survey_id)
-    db.add(response)
-    await db.flush()
-
-    for ans in data.answers:
-        # 创建回答记录
-        answer = SurveyAnswer(
-            response_id=response.id,
-            question_id=ans.question_id,
-            answer_text=ans.answer_text,
-            answer_rating=ans.answer_rating
-        )
-        db.add(answer)
-        await db.flush()
-
-        # 统一处理选项（单选、多选、“其他”）
-        selected_ids = []
-
-        # 单选题
-        if ans.selected_option_id is not None:
-            selected_ids.append(ans.selected_option_id)
-
-        # 多选题
-        if ans.selected_option_ids:
-            selected_ids.extend(ans.selected_option_ids)
-
-        if selected_ids:
-            # 查询选项详情（含 is_other）
-            stmt = select(SurveyOption).where(SurveyOption.id.in_(selected_ids))
-            result = await db.execute(stmt)
-            option_list = result.scalars().all()
-
-            # 获取 other_text 映射
-            other_text_map: Dict[str, str] = ans.other_text or {}
-
-            for option in option_list:
-                custom_value = None
-                if option.is_other:
-                    # 支持字符串和整数 key 形式
-                    custom_value = other_text_map.get(str(option.id)) or other_text_map.get(option.id)
-
-                choice = SurveyAnswerChoice(
-                    answer_id=answer.id,
-                    option_id=option.id,
-                    custom_value=custom_value
-                )
-                db.add(choice)
-
-    # 更新问卷的提交数
-    survey.current_responses += 1
-    await db.commit()
-
-    return {"message": "提交成功"}
-
-
-
 # ———————————————— 生成问卷二维码 ————————————————
 @router.get("/{survey_id}/qr")
 async def generate_qr(request: Request, survey_id: int):
@@ -452,6 +349,7 @@ async def generate_qr(request: Request, survey_id: int):
     img.save(img_bytes, format='PNG')
     img_bytes.seek(0)
     return StreamingResponse(img_bytes, media_type="image/png")
+
 
 @router.get("/summary/detail/{summary_id}/qr")
 async def generate_qr(request: Request, summary_id: int):
@@ -472,10 +370,7 @@ async def generate_qr(request: Request, summary_id: int):
 
 # ———————————————— 问卷统计 ————————————————
 @router.get("/{survey_id}/statistics")
-async def get_survey_statistics_detail(
-    survey_id: int,
-    db: AsyncSession = Depends(get_db)
-):
+async def get_survey_statistics_detail(survey_id: int, db: AsyncSession = Depends(get_db)):
     survey = await db.get(SurveyTable, survey_id)
     if not survey:
         raise HTTPException(status_code=404, detail="问卷不存在")
@@ -537,10 +432,7 @@ async def get_survey_statistics_detail(
 
 # ———————————————— 下载问卷统计表 ————————————————
 @router.get("/{survey_id}/download_excel")
-async def export_survey_data_excel(
-    survey_id: int,
-    db: AsyncSession = Depends(get_db)
-):
+async def export_survey_data_excel(survey_id: int, db: AsyncSession = Depends(get_db)):
     survey = await db.get(SurveyTable, survey_id)
     if not survey:
         raise HTTPException(status_code=404, detail="问卷不存在")
@@ -642,11 +534,7 @@ async def export_survey_data_excel(
 
 # 查询所有汇总问卷列表
 @router.get("/survey_summary/", response_model=Dict[str, Union[int, List[SummaryOut]]])
-async def survey_summary_list(
-    skip: int = 0,
-    limit: int = 10,
-    db: AsyncSession = Depends(get_db)
-):
+async def survey_summary_list(skip: int = 0,limit: int = 10,db: AsyncSession = Depends(get_db)):
     # 查询总数
     count_stmt = select(func.count()).select_from(SurveySummaryTable)
     total_result = await db.execute(count_stmt)
@@ -681,58 +569,9 @@ async def survey_summary_list(
     }
 
 
-# 创建新的汇总问卷
-@router.post("/survey_summary/", response_model=SummaryDetailOut)
-async def create_summary(
-    data: SummaryCreateIn,
-    db: AsyncSession = Depends(get_db)
-):
-    # 插入主表
-    new_summary = SurveySummaryTable(
-        name=data.name,
-        description=data.description
-    )
-    db.add(new_summary)
-    await db.flush()
-
-    # 插入关联表
-    for relation in data.relations:
-        db_relation = SurveySummaryLinks(
-            summary_id=new_summary.id,
-            survey_id=relation.survey_id,
-            description=relation.description
-        )
-        db.add(db_relation)
-
-    await db.commit()
-    await db.refresh(new_summary)
-
-    # 查询完整数据并预加载 relations
-    result = await db.execute(
-        select(SurveySummaryTable)
-        .options(selectinload(SurveySummaryTable.relations))
-        .where(SurveySummaryTable.id == new_summary.id)
-    )
-    summary = result.scalars().first()
-
-    return SummaryDetailOut(
-        id=summary.id,
-        name=summary.name,
-        description=summary.description,
-        created_at=summary.created_at,
-        relations=[
-            SummaryRelationOut.model_validate(r) for r in summary.relations
-        ]
-    )
-
-
 # 根据指定id修改汇总问卷
 @router.put("/survey_summary/{id}", response_model=SummaryDetailOut)
-async def update_summary(
-    id: int,
-    data: SummaryUpdateIn,
-    db: AsyncSession = Depends(get_db)
-):
+async def update_summary(id: int,data: SummaryUpdateIn,db: AsyncSession = Depends(get_db)):
     # 查询现有记录
     result = await db.execute(
         select(SurveySummaryTable).where(SurveySummaryTable.id == id)
@@ -785,10 +624,7 @@ async def update_summary(
 
 # 查询指定id汇总问卷信息
 @router.get("/survey_summary/{id}", response_model=SummaryDetailOut)
-async def get_summary_by_id(
-    id: int,
-    db: AsyncSession = Depends(get_db)
-):
+async def get_summary_by_id(id: int,db: AsyncSession = Depends(get_db)):
     result = await db.execute(
         select(SurveySummaryTable).where(SurveySummaryTable.id == id)
     )
@@ -809,10 +645,7 @@ async def get_summary_by_id(
 
 
 @router.post("/factory_notice/submit", summary="提交工厂须知登记")
-async def submit_factory_notice(
-    notice_data: FactoryNoticeCreate,
-    db: AsyncSession = Depends(get_db)
-):
+async def submit_factory_notice(notice_data: FactoryNoticeCreate,db: AsyncSession = Depends(get_db)):
     """
     提交工厂须知登记信息，创建一条历史记录
     """
@@ -845,3 +678,80 @@ async def submit_factory_notice(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"确认提交失败: {str(e)}"
         )
+
+
+# 获取多人评价结果
+@router.get("/response/{response_id}/evaluations", response_model=List[EvaluationAssignmentOut])
+async def get_response_evaluations(response_id: int,db: AsyncSession = Depends(get_db)):
+    """获取指定问卷回答记录的所有评价任务信息，包含评价者姓名"""
+    # 查询指定的回答记录及其关联的答案和评价任务
+    result = await db.execute(
+        select(SurveyResponse)
+        .where(SurveyResponse.id == response_id)
+        .options(
+            joinedload(SurveyResponse.answers)
+            .joinedload(SurveyAnswer.assignments)
+        )
+    )
+
+    response = result.unique().scalar_one_or_none()
+    if not response:
+        raise HTTPException(status_code=404, detail="问卷回答记录不存在")
+
+    # 收集所有评价任务ID，用于批量查询用户
+    evaluator_ids = {assignment.evaluator_id for answer in response.answers
+                     for assignment in answer.assignments}
+
+    # 批量查询所有相关用户
+    user_result = await db.execute(
+        select(User).where(User.id.in_(evaluator_ids))
+    )
+    users = {user.id: user for user in user_result.scalars().all()}
+
+    # 处理评价任务，添加评价者姓名
+    evaluations = []
+    for answer in response.answers:
+        for assignment in answer.assignments:
+            # 获取评价者姓名，如果用户不存在则显示"未知用户"
+            evaluator_name = users.get(assignment.evaluator_id, None)
+            evaluator_name = evaluator_name.name if evaluator_name else "未知用户"
+
+            evaluations.append(EvaluationAssignmentOut(
+                id=assignment.id,
+                answer_id=assignment.answer_id,
+                evaluator_id=assignment.evaluator_id,
+                evaluator_name=evaluator_name,  # 添加评价者姓名
+                evaluation_score=assignment.evaluation_score,
+                status=assignment.status,
+                created_at=assignment.created_at
+            ))
+
+    return evaluations
+
+
+# ------------------------------------------------ 绩效评价 ---------------------------------
+
+# 获取指定答案的所有评价记录
+@router.get("/answers/{answer_id}/evaluations", response_model=list[EvaluationAssignmentOut])
+async def get_answer_evaluations(
+        answer_id: int,
+        db: AsyncSession = Depends(get_db)
+):
+    # 验证答案是否存在
+    answer_result = await db.execute(
+        select(SurveyAnswer).where(SurveyAnswer.id == answer_id)
+    )
+    if not answer_result.scalar_one_or_none():
+        raise HTTPException(
+            status_code=404,
+            detail=f"答案ID {answer_id} 不存在"
+        )
+
+    # 查询该答案的所有评价记录
+    result = await db.execute(
+        select(SurveyEvaluationAssignment)
+        .where(SurveyEvaluationAssignment.answer_id == answer_id)
+        .order_by(SurveyEvaluationAssignment.created_at.desc())
+    )
+
+    return result.scalars().all()
