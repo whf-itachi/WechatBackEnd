@@ -1,6 +1,7 @@
 from datetime import datetime
 from typing import Optional, List, Union, Dict
 from pydantic import BaseModel, Field, RootModel, ConfigDict
+from sqlalchemy import false
 
 
 class SurveyBase(BaseModel):
@@ -23,6 +24,7 @@ class QuestionCreate(BaseModel):
 class SurveyCreate(BaseModel):
     title: str = Field(..., max_length=255)
     description: Optional[str] = None
+    require_login: Optional[bool] = False
     expire_at: Optional[datetime] = None
     questions: List[QuestionCreate]
 
@@ -73,6 +75,7 @@ class AnswerSubmit(BaseModel):
     question_id: int
     answer_text: Optional[str] = None
     answer_rating: Optional[int] = None
+    answer_evaluate: Optional[int] = None
     selected_option_id: Optional[int] = None
     selected_option_ids: Optional[List[int]] = None
     other_text: Optional[Dict[str, str]] = None  # key 为 option_id，value 为自定义值
@@ -84,6 +87,18 @@ class ResponseSubmit(BaseModel):
     temporary_token: str
     answers: List[AnswerSubmit]
 
+class EvaluationAssignmentOut(BaseModel):
+    id: int
+    answer_id: int
+    evaluator_name: str
+    evaluator_id: Optional[int] = None
+    evaluation_score: Optional[int] = None
+    status: str
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
 class AnswerOutFull(BaseModel):
     question_id: int
     question_text: str
@@ -94,6 +109,7 @@ class AnswerOutFull(BaseModel):
     selected_option_id: Optional[int] = None
     selected_option_ids: Optional[List[int]] = None
     other_text: Optional[Dict[str, str]] = None
+    evaluations: List[EvaluationAssignmentOut] = []
 
 
 class SurveyResponseSummary(BaseModel):
@@ -223,3 +239,19 @@ class ShareEvaluationOut(BaseModel):
     message: str
     data: Optional[dict] = None
     created_at: datetime
+
+
+class SurveyOptionOut(BaseModel):
+    id: int
+    value: str
+    is_other: bool
+
+    class Config:
+        from_attributes = True
+
+
+
+
+
+
+

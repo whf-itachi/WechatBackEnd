@@ -3,6 +3,7 @@ from datetime import timezone
 
 import openpyxl
 from openpyxl.styles import Font
+from openpyxl.utils import get_column_letter
 from fastapi import APIRouter, Depends, HTTPException, status, Request, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select, func, delete
@@ -17,6 +18,7 @@ from app.models import User
 from app.models.survey import SurveyTable, SurveyQuestion, SurveyOption, SurveyResponse, SurveyAnswer, \
     SurveyAnswerChoice, SurveySummaryTable, SurveySummaryLinks, FactoryNoticeHistory, SurveyEvaluationAssignment
 from app.schemas.survey_schema import *
+
 
 router = APIRouter()
 logger = get_logger('Survey_router')
@@ -77,8 +79,8 @@ async def survey_responses_list(
     return ResponseList(total=total, items=items)
 
 
-# 获取具体问卷回答详情
-@router.get("/answer/{response_id}", response_model=ResponseDetailOut)
+# 获取具体问卷回答详情(调试新的接口，该代码废弃当暂时保留参考)
+@router.get("/whf/answer/{response_id}", response_model=ResponseDetailOut)
 async def response_answer_detail(response_id: int, db: AsyncSession = Depends(get_db)):
     result = await db.execute(
         select(SurveyResponse)
@@ -155,6 +157,89 @@ async def response_answer_detail(response_id: int, db: AsyncSession = Depends(ge
         survey_title=r.survey.title if r.survey else "",
         answers=answers_out
     )
+
+
+@router.get("/answer/{response_id}", response_model=ResponseDetailOut)
+async def response_answer_detail(response_id: int, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(
+        select(SurveyResponse)
+        .where(SurveyResponse.id == response_id)
+        .options(
+            selectinload(SurveyResponse.survey),
+            selectinload(SurveyResponse.answers)
+                .selectinload(SurveyAnswer.selected_options)
+                .selectinload(SurveyAnswerChoice.option),
+            selectinload(SurveyResponse.answers).selectinload(SurveyAnswer.question),
+            selectinload(SurveyResponse.answers).selectinload(SurveyAnswer.assignments)
+        )
+    )
+    r = result.unique().scalar_one_or_none()
+    if not r:
+        raise HTTPException(status_code=404, detail="提交记录不存在")
+
+    answers_out = []
+    for a in r.answers:
+        q = a.question
+
+        # 初始化选项字段
+        selected_option_id: Optional[int] = None
+        selected_option_ids: Optional[List[int]] = None
+        other_text: Optional[Dict[str, str]] = {}
+
+        # 只处理单选、多选题的选项
+        if q.type in ("single_choice", "multiple_choice") and a.selected_options:
+            selected_ids = []
+            for choice in a.selected_options:
+                if not choice.option:
+                    continue
+                option_id = choice.option.id
+                selected_ids.append(option_id)
+                if choice.option.is_other and choice.custom_value:
+                    other_text[str(option_id)] = choice.custom_value
+
+            if q.type == "single_choice" and selected_ids:
+                selected_option_id = selected_ids[0]
+            elif q.type == "multiple_choice" and selected_ids:
+                selected_option_ids = selected_ids
+
+        # 清理 other_text：如果为空字典，设为 None
+        if not other_text:
+            other_text = None
+
+        # 处理评价任务
+        evaluations = [
+            EvaluationAssignmentOut(
+                id=assignment.id,
+                answer_id=assignment.answer_id,
+                evaluator_name=assignment.evaluator_name,
+                evaluator_id=assignment.evaluator_id,
+                evaluation_score=assignment.evaluation_score,
+                status=assignment.status,
+                created_at=assignment.created_at
+            )
+            for assignment in a.assignments
+        ]
+
+        answers_out.append(AnswerOutFull(
+            question_id=q.id,
+            question_text=q.text,
+            question_type=q.type,
+            required=q.required,
+            answer_text=a.answer_text,
+            answer_rating=a.answer_rating,
+            selected_option_id=selected_option_id,
+            selected_option_ids=selected_option_ids,
+            other_text=other_text,
+            evaluations=evaluations
+        ))
+
+    return ResponseDetailOut(
+        id=r.id,
+        submitted_at=r.submitted_at,
+        survey_title=r.survey.title if r.survey else "",
+        answers=answers_out
+    )
+
 
 
 # 问卷统计
@@ -431,7 +516,7 @@ async def get_survey_statistics_detail(survey_id: int, db: AsyncSession = Depend
 
 
 # ———————————————— 下载问卷统计表 ————————————————
-@router.get("/{survey_id}/download_excel")
+@router.get("/whf/{survey_id}/download_excel")
 async def export_survey_data_excel(survey_id: int, db: AsyncSession = Depends(get_db)):
     survey = await db.get(SurveyTable, survey_id)
     if not survey:
@@ -515,6 +600,173 @@ async def export_survey_data_excel(survey_id: int, db: AsyncSession = Depends(ge
             except:
                 pass
         adjusted_width = max_length + 2
+        ws.column_dimensions[column_letter].width = adjusted_width
+
+    output = BytesIO()
+    wb.save(output)
+    output.seek(0)
+
+    return StreamingResponse(
+        output,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={
+            "Content-Disposition": f"attachment; filename=survey_{survey_id}_data.xlsx"
+        }
+    )
+
+
+@router.get("/{survey_id}/download_excel")
+async def export_survey_data_excel(survey_id: int, db: AsyncSession = Depends(get_db)):
+    survey = await db.get(SurveyTable, survey_id)
+    if not survey:
+        raise HTTPException(status_code=404, detail="问卷不存在")
+
+    questions_result = await db.execute(
+        select(SurveyQuestion).where(SurveyQuestion.survey_id == survey_id)
+    )
+    questions = questions_result.scalars().all()
+
+    responses_result = await db.execute(
+        select(SurveyResponse).where(SurveyResponse.survey_id == survey_id)
+    )
+    responses = responses_result.scalars().all()
+
+    # 分离 evaluate 类型问题
+    evaluate_questions = [q for q in questions if q.type == "evaluate"]
+    normal_questions = [q for q in questions if q.type != "evaluate"]
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "问卷统计"
+
+    # === 构建表头（动态列）===
+    headers = []
+    question_to_col_index: Dict[int, int] = {}  # 普通问题ID -> 列索引
+    evaluate_cols: Dict[int, Dict[str, int]] = {}  # evaluate问题ID -> {name_col: index, score_col: index}
+
+    col_idx = 1
+    for q in normal_questions:
+        headers.append(q.text)
+        question_to_col_index[q.id] = col_idx
+        col_idx += 1
+
+    # 为每个 evaluate 问题添加两列
+    for q in evaluate_questions:
+        headers.append(f"{q.text}_evaluator_name")
+        headers.append(f"{q.text}_score")
+        evaluate_cols[q.id] = {
+            "name_col": col_idx,
+            "score_col": col_idx + 1
+        }
+        col_idx += 2
+
+    headers.append("提交时间")
+    submit_time_col = col_idx
+
+    ws.append(headers)
+    for cell in ws[1]:
+        cell.font = Font(bold=True)
+
+    # === 处理每一份 response 及其评价 ===
+    for response in responses:
+        # 获取所有普通答案
+        answer_result = await db.execute(
+            select(SurveyAnswer).where(SurveyAnswer.response_id == response.id)
+        )
+        answers = {ans.question_id: ans for ans in answer_result.scalars().all()}
+
+        # 获取所有评价任务（按 answer_id 分组）
+        eval_assignments_result = await db.execute(
+            select(SurveyEvaluationAssignment)
+            .join(SurveyAnswer, SurveyEvaluationAssignment.answer_id == SurveyAnswer.id)
+            .where(SurveyAnswer.response_id == response.id)
+        )
+        eval_assignments = eval_assignments_result.scalars().all()
+
+        # 按 answer_id 分组评价
+        assignments_by_answer: Dict[int, list] = {}
+        for ea in eval_assignments:
+            assignments_by_answer.setdefault(ea.answer_id, []).append(ea)
+
+        # === 构建主回答行（包含 master 的评价）===
+        master_row = [""] * len(headers)  # 初始化为空
+
+        # 填充普通问题答案
+        for q in normal_questions:
+            ans = answers.get(q.id)
+            val = ""
+            if ans:
+                if q.type == "rating":
+                    val = str(ans.answer_rating) if ans.answer_rating is not None else ""
+                elif q.type in ["single_choice", "multiple_choice"]:
+                    choices_result = await db.execute(
+                        select(SurveyOption, SurveyAnswerChoice)
+                        .join(SurveyAnswerChoice, SurveyOption.id == SurveyAnswerChoice.option_id)
+                        .where(SurveyAnswerChoice.answer_id == ans.id)
+                    )
+                    choices_rows = choices_result.all()
+                    values = []
+                    for choice, answer_choice in choices_rows:
+                        v = choice.value
+                        if choice.is_other and answer_choice.custom_value:
+                            v += f" {answer_choice.custom_value}"
+                        values.append(v)
+                    val = ", ".join(values)
+                elif q.type == "text":
+                    val = ans.answer_text or ""
+                elif q.type == "meta_data":
+                    val = ans.answer_text or ""
+                elif q.type == "target":
+                    val = ans.answer_text or ""
+            master_row[question_to_col_index[q.id] - 1] = val  # 列索引从1开始，list从0
+
+        # 填充 evaluate 问题（只填 master 的）
+        for q in evaluate_questions:
+            ans = answers.get(q.id)
+            if not ans:
+                continue
+            assignments = assignments_by_answer.get(ans.id, [])
+            master_eval = next((ea for ea in assignments if ea.identity == "master"), None)
+            if master_eval:
+                name_col = evaluate_cols[q.id]["name_col"]
+                score_col = evaluate_cols[q.id]["score_col"]
+                master_row[name_col - 1] = master_eval.evaluator_name
+                master_row[score_col - 1] = master_eval.evaluation_score or ""
+
+        # 提交时间
+        master_row[submit_time_col - 1] = response.submitted_at
+
+        # 写入主行
+        ws.append(master_row)
+
+        # === 写入非 master 的评价行 ===
+        for q in evaluate_questions:
+            ans = answers.get(q.id)
+            if not ans:
+                continue
+            assignments = assignments_by_answer.get(ans.id, [])
+            non_master_evals = [ea for ea in assignments if ea.identity != "master"]
+
+            for ea in non_master_evals:
+                extra_row = [""] * len(headers)
+                name_col = evaluate_cols[q.id]["name_col"]
+                score_col = evaluate_cols[q.id]["score_col"]
+                extra_row[name_col - 1] = ea.evaluator_name
+                extra_row[score_col - 1] = ea.evaluation_score or ""
+                extra_row[submit_time_col - 1] = response.submitted_at  # 保持提交时间一致
+                ws.append(extra_row)
+
+    # 自动调整列宽
+    for column in ws.columns:
+        max_length = 0
+        column_letter = get_column_letter(column[0].column)
+        for cell in column:
+            try:
+                if cell.value:
+                    max_length = max(max_length, len(str(cell.value)))
+            except:
+                pass
+        adjusted_width = min(max_length + 2, 50)  # 限制最大宽度
         ws.column_dimensions[column_letter].width = adjusted_width
 
     output = BytesIO()
@@ -731,27 +983,51 @@ async def get_response_evaluations(response_id: int,db: AsyncSession = Depends(g
 
 # ------------------------------------------------ 绩效评价 ---------------------------------
 
-# 获取指定答案的所有评价记录
-@router.get("/answers/{answer_id}/evaluations", response_model=list[EvaluationAssignmentOut])
+# 获取指定回答表的所有评价记录
+@router.get("/answers/{response_id}/evaluations", response_model=list[EvaluationAssignmentOut])
 async def get_answer_evaluations(
-        answer_id: int,
+        response_id: int,
         db: AsyncSession = Depends(get_db)
 ):
-    # 验证答案是否存在
-    answer_result = await db.execute(
-        select(SurveyAnswer).where(SurveyAnswer.id == answer_id)
+    """
+    根据问卷回答记录ID（response_id），查询该回答下所有问题的评价任务记录
+    关联逻辑：SurveyResponse → 多个SurveyAnswer → 每个SurveyAnswer的SurveyEvaluationAssignment
+    """
+    # 1. 验证问卷回答记录（SurveyResponse）是否存在
+    response_result = await db.execute(
+        select(SurveyResponse)
+        .where(SurveyResponse.id == response_id)
+        .options(joinedload(SurveyResponse.answers))
     )
-    if not answer_result.scalar_one_or_none():
+    response = response_result.scalar_one_or_none()
+
+    if not response:
         raise HTTPException(
             status_code=404,
-            detail=f"答案ID {answer_id} 不存在"
+            detail=f"问卷回答记录（response_id: {response_id}）不存在"
         )
 
-    # 查询该答案的所有评价记录
-    result = await db.execute(
-        select(SurveyEvaluationAssignment)
-        .where(SurveyEvaluationAssignment.answer_id == answer_id)
-        .order_by(SurveyEvaluationAssignment.created_at.desc())
-    )
+    # 2. 提取该回答下所有答案的ID（用于批量查询评价记录，提高效率）
+    answer_ids = [answer.id for answer in response.answers]
+    if not answer_ids:
+        # 若该回答下无任何答案，返回空列表（避免后续查询报错）
+        return []
 
-    return result.scalars().all()
+    # 3. 查询指定答案ID对应的所有评价记录（仅返回表内指定字段）
+    evaluation_result = await db.execute(
+        select(
+            SurveyEvaluationAssignment.id,
+            SurveyEvaluationAssignment.answer_id,
+            SurveyEvaluationAssignment.evaluator_name,
+            SurveyEvaluationAssignment.evaluator_id,
+            SurveyEvaluationAssignment.evaluation_score,
+            SurveyEvaluationAssignment.status,
+            SurveyEvaluationAssignment.updated_at
+        )
+        .where(SurveyEvaluationAssignment.answer_id.in_(answer_ids))
+        .order_by(SurveyEvaluationAssignment.created_at.desc())  # 按创建时间倒序（最新在前）
+    )
+    # 转换查询结果为字典列表（便于匹配 Pydantic 模型）
+    evaluations = [dict(row._mapping) for row in evaluation_result.all()]
+
+    return evaluations

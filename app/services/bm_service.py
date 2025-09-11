@@ -20,7 +20,7 @@ async def create_evaluations_from_redis(
     4. 回填评分，更新 assignment 状态为 completed
     """
     # 1. 获取待创建的任务（来自 add_question_ename）
-    pending_invitations = get_all_records_func(temporary_token)  # list of dict
+    pending_invitations = await get_all_records_func(temporary_token)  # list of dict
     if not pending_invitations:
         return
     print("获取到redis中的 pending_invitations 为: ", pending_invitations)
@@ -73,28 +73,37 @@ async def create_evaluations_from_redis(
 
     await db.commit()  # 提交所有 assignment
 
-    submitted_evaluations = get_evaluator_records(temporary_token)  # list of dict
+    submitted_evaluations = await get_evaluator_records(temporary_token)  # list of dict
+    print("submitted_evaluations is:", submitted_evaluations)
     submitted_map = {
         (item["question_id"], item["evaluator_name"]): item["evaluation_score"]
         for item in submitted_evaluations
-        if all(k in item for k in ["question_id", "evaluator_name", "evaluation_score"])
+        if all(k in item for k in ["question_id", "", "evaluator_name", "evaluation_score"])
     }
-    print("submitted_map: ", submitted_map)
+    id_map = {
+        (item["question_id"], item["evaluator_name"]): item["evaluator_id"]
+        for item in submitted_evaluations
+        if all(k in item for k in ["question_id", "evaluator_name", "evaluator_id"])
+    }
+    print(submitted_map)
+    print(id_map)
     # 如果有些 assignment 创建时没有 score，但现在有提交，就更新
     for item in created_assignments:
         if item["assignment"].status == "pending":
             # 检查是否有后来提交的评分
             score = submitted_map.get((item["question_id"], item["evaluator_name"]))
+            evaluator_id = id_map.get((item["question_id"], item["evaluator_name"]))
+
             print("得到分数为：", score)
             if score is not None:
                 # 更新 assignment
                 await db.execute(
                     update(SurveyEvaluationAssignment)
                     .where(SurveyEvaluationAssignment.answer_id == item["answer_id"])
-                    .where(SurveyEvaluationAssignment.evaluator_id == item["evaluator_id"])
-                    .values(evaluation_score=score, status="completed")
+                    .where(SurveyEvaluationAssignment.evaluator_name == item["evaluator_name"])
+                    .values(evaluation_score=score, evaluator_id=evaluator_id, status="completed")
                 )
     await db.commit()
 
-    delete_all_records(temporary_token)
-    clear_evaluator_records(temporary_token)
+    await delete_all_records(temporary_token)
+    await clear_evaluator_records(temporary_token)

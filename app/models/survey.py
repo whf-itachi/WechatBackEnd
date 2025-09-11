@@ -183,6 +183,7 @@ class SurveyEvaluationAssignment(SQLModel, table=True):
     evaluator_name: str  # 评价者名称
     evaluator_id: Optional[int] = None  # 提交者id
     evaluation_score: Optional[int] = None  # 给出的评分
+    identity: Optional[str] = None  # 身份
     status: str = Field(default="pending")  # pending / completed
 
     created_at: datetime = Field(
