@@ -961,7 +961,7 @@ async def get_answer_evaluations(
     return evaluations
 
 
-# 根据survey_id和responses_id以及evaluator_id查询到该邀请人需要填写的所有问题信息。
+# 根据survey_id和responses_id以及evaluator_id查询到该邀请人需要填写的所有问题信息
 @router.get("/evaluator/questions")
 async def get_evaluation_question_ids(
     survey_id: int = Query(..., description="问卷ID"),
@@ -970,6 +970,7 @@ async def get_evaluation_question_ids(
     db: AsyncSession = Depends(get_db)
 ):
     try:
+        # 查询需要评价的问题ID
         stmt = (
             select(SurveyAnswer.question_id)
             .join(SurveyEvaluationAssignment, SurveyEvaluationAssignment.answer_id == SurveyAnswer.id)
@@ -982,7 +983,27 @@ async def get_evaluation_question_ids(
         result = await db.execute(stmt)
         question_ids = result.scalars().all()
 
-        return {"data": question_ids}
+        # 查询被评价人信息（type为target的问题及其答案）
+        target_stmt = (
+            select(
+                SurveyQuestion.id.label("question_id"),
+                SurveyQuestion.text.label("question_text"),
+                SurveyAnswer.answer_text.label("target_value")
+            )
+            .join(SurveyAnswer, SurveyQuestion.id == SurveyAnswer.question_id)
+            .where(SurveyQuestion.survey_id == survey_id)
+            .where(SurveyQuestion.type == "target")
+            .where(SurveyAnswer.response_id == response_id)
+        )
+        target_result = await db.execute(target_stmt)
+        target_info = target_result.mappings().all()
+
+        return {
+            "data": {
+                "question_ids": question_ids,
+                "target_persons": target_info  # 被评价人信息列表
+            }
+        }
 
     except Exception as e:
         import traceback
@@ -991,4 +1012,5 @@ async def get_evaluation_question_ids(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="系统错误"
         )
+
 
