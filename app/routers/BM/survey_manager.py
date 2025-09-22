@@ -24,7 +24,6 @@ router = APIRouter()
 logger = get_logger('Survey_router')
 
 
-
 # 获取某问卷所有回答列表
 @router.get("/responses", response_model=ResponseList)
 async def survey_responses_list(
@@ -67,7 +66,7 @@ async def survey_responses_list(
         metadata_answers = {
             answer.question.text: (answer.answer_text or "")
             for answer in response.answers
-            if answer.question.type == "meta_data"
+            if answer.question.type == "meta_data" or  answer.question.type == "target"
         }
 
         items.append(ResponseItem(
@@ -79,85 +78,7 @@ async def survey_responses_list(
     return ResponseList(total=total, items=items)
 
 
-# 获取具体问卷回答详情(调试新的接口，该代码废弃当暂时保留参考)
-@router.get("/whf/answer/{response_id}", response_model=ResponseDetailOut)
-async def response_answer_detail(response_id: int, db: AsyncSession = Depends(get_db)):
-    result = await db.execute(
-        select(SurveyResponse)
-        .where(SurveyResponse.id == response_id)
-        .options(
-            joinedload(SurveyResponse.survey),
-            joinedload(SurveyResponse.answers)
-                .joinedload(SurveyAnswer.selected_options)
-                .joinedload(SurveyAnswerChoice.option),
-            joinedload(SurveyResponse.answers).joinedload(SurveyAnswer.question),
-            # 添加评价任务的关联加载
-            joinedload(SurveyResponse.answers)
-                .joinedload(SurveyAnswer.assignments)
-        )
-    )
-    r = result.unique().scalar_one_or_none()
-    if not r:
-        raise HTTPException(status_code=404, detail="提交记录不存在")
-
-    answers_out = []
-    for a in r.answers:
-        q = a.question
-
-        selected_option_id = None
-        selected_option_ids = None
-        other_text = {}
-
-        if a.selected_options:
-            selected_ids = []
-            for choice in a.selected_options:
-                if not choice.option:
-                    continue
-                selected_ids.append(choice.option.id)
-                if choice.option.is_other:
-                    other_text[str(choice.option.id)] = choice.custom_value
-
-            if q.type == "single_choice":
-                selected_option_id = selected_ids[0] if selected_ids else None
-            elif q.type == "multiple_choice":
-                selected_option_ids = selected_ids
-
-        # 处理评价任务信息
-        evaluations = []
-        if a.assignments:
-            evaluations = [
-                EvaluationAssignmentOut(
-                    id=assignment.id,
-                    answer_id=assignment.answer_id,
-                    evaluator_id=assignment.evaluator_id,
-                    evaluation_score=assignment.evaluation_score,
-                    status=assignment.status,
-                    created_at=assignment.created_at
-                )
-                for assignment in a.assignments
-            ]
-
-        answers_out.append(AnswerOutFull(
-            question_id=q.id,
-            question_text=q.text,
-            question_type=q.type,
-            required=q.required,
-            answer_text=a.answer_text,
-            answer_rating=a.answer_rating,
-            selected_option_id=selected_option_id,
-            selected_option_ids=selected_option_ids,
-            other_text=other_text or None,
-            evaluations=evaluations  # 添加评价信息
-        ))
-
-    return ResponseDetailOut(
-        id=r.id,
-        submitted_at=r.submitted_at,
-        survey_title=r.survey.title if r.survey else "",
-        answers=answers_out
-    )
-
-
+# 获取具体问卷回答详情
 @router.get("/answer/{response_id}", response_model=ResponseDetailOut)
 async def response_answer_detail(response_id: int, db: AsyncSession = Depends(get_db)):
     result = await db.execute(
