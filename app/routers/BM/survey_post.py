@@ -10,111 +10,82 @@ from app.logger import get_logger
 from app.models import User
 from app.models.survey import *
 from app.schemas.survey_schema import *
-from app.services.bm_service import create_evaluations_from_redis
 
 router = APIRouter()
 logger = get_logger('Survey_post_router')
 
-# 为单个评价者创建评价记录接口
+
 @router.post("/evaluation/responses")
-async def create_single_evaluation_assignment(data: CreateEvaluationAssignment,db: AsyncSession = Depends(get_db)):
+async def create_batch_evaluation_assignments(
+    data: CreateEvaluationAssignmentBatch,
+    db: AsyncSession = Depends(get_db)
+):
     """
-    创建单个评价任务（支持延迟绑定）
-    - 如果主答卷未提交：暂存到 Redis
-    - 如果主答卷已提交：直接创建评价任务
+    批量提交评价任务
     """
-    print("..................")
-    print(data)
-    # 1. 检查 temporary_token 是否已存在于 SurveyResponse（即主答卷是否已提交）
-    result = await db.execute(select(SurveyResponse).where(SurveyResponse.temporary_token == data.temporary_token))
-    response = result.scalar_one_or_none()
-
-    if not response:
-        # 情况1：主答卷未提交 → 暂存到 Redis
-        try:
-            # 调用你的 Redis 存储函数
-            await add_evaluate_info(
-                t_token=data.temporary_token,
-                question_id=data.question_id,
-                e_name=data.evaluator_name,
-                e_id=data.evaluator_id,
-                e_score=data.evaluation_score
+    try:
+        for item in data.evaluations:
+            # 1. 获取对应 answer_id
+            answer_result = await db.execute(
+                select(SurveyAnswer.id)
+                .where(SurveyAnswer.response_id == data.response_id)
+                .where(SurveyAnswer.question_id == item.question_id)
             )
-            return {
-                "code": 200,
-                "message": "评价任务已暂存，待主答卷提交后生效",
-                "data": {
-                    "temporary_token": data.temporary_token,
-                    "question_id": data.question_id,
-                    "evaluator_id": data.evaluator_id
-                }
-            }
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f"暂存失败: {str(e)}")
+            answer_id = answer_result.scalar_one_or_none()
+            if not answer_id:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"未找到问题ID {item.question_id} 对应的答案记录"
+                )
 
-    # 2. 主答卷已存在 → 查找对应的 answer_id
-    answer_result = await db.execute(
-        select(SurveyAnswer.id)
-        .where(SurveyAnswer.response_id == response.id)
-        .where(SurveyAnswer.question_id == data.question_id)
-    )
-    answer_id = answer_result.scalar_one_or_none()
-    print("获取到answer_id is :", answer_id)
-    if not answer_id:
-        raise HTTPException(
-            status_code=404,
-            detail="未找到匹配的答案记录（可能问题ID不正确）"
-        )
+            # 2. 检查是否已完成评价
+            exists_result = await db.execute(
+                select(SurveyEvaluationAssignment.id)
+                .where(SurveyEvaluationAssignment.answer_id == answer_id)
+                .where(SurveyEvaluationAssignment.evaluator_id == data.evaluator_id)
+                .where(SurveyEvaluationAssignment.status == "completed")
+            )
+            if exists_result.first():
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"问题ID {item.question_id} 已提交，不可重复作答"
+                )
 
-    # 3. 检查是否已存在相同的评价任务（防重复提交）
-    exists_result = await db.execute(
-        select(SurveyEvaluationAssignment.id)
-        .where(SurveyEvaluationAssignment.answer_id == answer_id)
-        .where(SurveyEvaluationAssignment.evaluator_id == data.evaluator_id)
-        .where(SurveyEvaluationAssignment.status == "completed")
-    )
-    if exists_result.first():
-        raise HTTPException(
-            status_code=400,
-            detail="已经提交，不可重复作答"
-        )
+            # 3. 获取对应评价任务
+            eval_result = await db.execute(
+                select(SurveyEvaluationAssignment)
+                .where(SurveyEvaluationAssignment.answer_id == answer_id)
+                .where(SurveyEvaluationAssignment.evaluator_id == data.evaluator_id)
+            )
 
-    # 4. 找到需要更新的对象
-    print(answer_id, data.evaluator_name)
-    eval_result = await db.execute(
-        select(SurveyEvaluationAssignment)
-        .where(SurveyEvaluationAssignment.answer_id == answer_id)
-        .where(SurveyEvaluationAssignment.evaluator_name == data.evaluator_name)
-    )
-    evaluation_assignment = eval_result.scalar_one_or_none()
+            evaluation_assignment = eval_result.scalar_one_or_none()
+            if not evaluation_assignment:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"未找到问题ID {item.question_id} 的评价任务"
+                )
 
-    if not evaluation_assignment:
-        raise HTTPException(
-            status_code=404,
-            detail="未找到对应的评价任务"
-        )
-    # 4. 更新评价任务字段
-    evaluation_assignment.evaluation_score = data.evaluation_score
-    evaluation_assignment.evaluator_id = data.evaluator_id
-    evaluation_assignment.status = "completed"  # 可以根据需要更新状态
+            # 4. 更新评价任务
+            evaluation_assignment.evaluation_score = item.evaluation_score
+            evaluation_assignment.evaluator_id = data.evaluator_id
+            evaluation_assignment.status = "completed"
+            db.add(evaluation_assignment)  # 标记为需要 commit
 
-    await db.commit()
-    await db.refresh(evaluation_assignment)
+        # 5. 提交事务
+        await db.commit()
 
-    # 5. 返回成功结果
-    return {
-        "code": 200,
-        "message": "评价任务创建成功",
-        "data": {
-            "id": evaluation_assignment.id,
-            "answer_id": answer_id,
-            "evaluator_id": data.evaluator_id,
-            "evaluator_name": data.evaluator_name,
-            "evaluation_score": data.evaluation_score,
-            "status": "completed",
-            "created_at": evaluation_assignment.created_at
+        return {
+            "code": 200,
+            "message": "评价任务批量提交成功"
         }
-    }
+
+    except Exception as e:
+        import traceback
+        print(traceback.format_exc())
+        raise HTTPException(
+            status_code=500,
+            detail="系统错误"
+        )
 
 
 # 创建问卷
@@ -243,21 +214,8 @@ async def submit_response(survey_id: int,data: ResponseSubmit,db: AsyncSession =
 
     user_name = await db.scalar(select(User.name).where(User.id == data.evaluator_id))
     print(".get user_name is : ", user_name)
-    # --------------------------
-    # 3. 创建答卷主记录（SurveyResponse）
-    # --------------------------
-    temporary_token = data.temporary_token
-    token_query = select(SurveyResponse).where(SurveyResponse.temporary_token == temporary_token)
-    # 执行查询并获取结果（0 或 1 条）
-    existing_response = await db.execute(token_query)
-    existing_response = existing_response.scalar_one_or_none()
 
-    if existing_response:
-        raise HTTPException(
-            status_code=400,
-            detail=f"重复提交：temporary_token '{data.temporary_token}' 已存在"
-        )
-    response = SurveyResponse(survey_id=survey_id, temporary_token=temporary_token)
+    response = SurveyResponse(survey_id=survey_id)
     db.add(response)
     await db.flush()  # 触发数据库自增ID生成，用于后续关联
 
@@ -322,13 +280,26 @@ async def submit_response(survey_id: int,data: ResponseSubmit,db: AsyncSession =
             # 创建评价任务记录
             evaluation_assignment = SurveyEvaluationAssignment(
                 answer_id=answer.id,  # 关联当前答案（即“被评价的答案”）
-                evaluator_name=user_name,  # 评价者名称
                 evaluator_id=data.evaluator_id,  # 评价者id
                 evaluation_score=ans.answer_evaluate,  # 评分结果
                 identity="master",
                 status="completed"  # 评分状态完成
             )
             db.add(evaluation_assignment)
+
+            # --------------------------
+            # 4.4 处理邀请的评价任务（invited）
+            # --------------------------
+            invited_user_ids = data.invited_users.get(ans.question_id, []) if data.invited_users else []
+            if invited_user_ids:
+                for invited_id in invited_user_ids:
+                    invited_assignment = SurveyEvaluationAssignment(
+                        answer_id=answer.id,  # 对应当前问题的答案
+                        evaluator_id=invited_id,  # 受邀评价人
+                        identity="invited",
+                        status="pending"
+                    )
+                    db.add(invited_assignment)
 
     # --------------------------
     # 5. 更新问卷提交数 + 提交事务
@@ -337,9 +308,6 @@ async def submit_response(survey_id: int,data: ResponseSubmit,db: AsyncSession =
     await db.commit()  # 批量写入所有记录（response/answer/choice/evaluation）
     await db.refresh(response)  # 刷新对象，获取最新数据库状态（可选）
     print("2222222222:", evaluate_question_ids)
-    # 根据temporary_token查询redis数据， 创建绩效评价记录
-    if evaluate_question_ids:
-        await create_evaluations_from_redis(db, temporary_token, get_all_records)
 
     # --------------------------
     # 6. 返回结果（含关键ID，便于后续查询）

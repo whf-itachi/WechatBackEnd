@@ -129,7 +129,6 @@ async def response_answer_detail(response_id: int, db: AsyncSession = Depends(ge
                 EvaluationAssignmentOut(
                     id=assignment.id,
                     answer_id=assignment.answer_id,
-                    evaluator_name=assignment.evaluator_name,
                     evaluator_id=assignment.evaluator_id,
                     evaluation_score=assignment.evaluation_score,
                     status=assignment.status,
@@ -170,7 +169,9 @@ async def response_answer_detail(response_id: int, db: AsyncSession = Depends(ge
                 .selectinload(SurveyAnswer.selected_options)
                 .selectinload(SurveyAnswerChoice.option),
             selectinload(SurveyResponse.answers).selectinload(SurveyAnswer.question),
-            selectinload(SurveyResponse.answers).selectinload(SurveyAnswer.assignments)
+            selectinload(SurveyResponse.answers)
+            .selectinload(SurveyAnswer.assignments)
+            .selectinload(SurveyEvaluationAssignment.evaluator)
         )
     )
     r = result.unique().scalar_one_or_none()
@@ -211,8 +212,8 @@ async def response_answer_detail(response_id: int, db: AsyncSession = Depends(ge
             EvaluationAssignmentOut(
                 id=assignment.id,
                 answer_id=assignment.answer_id,
-                evaluator_name=assignment.evaluator_name,
                 evaluator_id=assignment.evaluator_id,
+                evaluator_name=assignment.evaluator.name if assignment.evaluator else None,
                 evaluation_score=assignment.evaluation_score,
                 status=assignment.status,
                 created_at=assignment.created_at
@@ -964,15 +965,11 @@ async def get_response_evaluations(response_id: int,db: AsyncSession = Depends(g
     evaluations = []
     for answer in response.answers:
         for assignment in answer.assignments:
-            # 获取评价者姓名，如果用户不存在则显示"未知用户"
-            evaluator_name = users.get(assignment.evaluator_id, None)
-            evaluator_name = evaluator_name.name if evaluator_name else "未知用户"
 
             evaluations.append(EvaluationAssignmentOut(
                 id=assignment.id,
                 answer_id=assignment.answer_id,
                 evaluator_id=assignment.evaluator_id,
-                evaluator_name=evaluator_name,  # 添加评价者姓名
                 evaluation_score=assignment.evaluation_score,
                 status=assignment.status,
                 created_at=assignment.created_at
@@ -980,8 +977,6 @@ async def get_response_evaluations(response_id: int,db: AsyncSession = Depends(g
 
     return evaluations
 
-
-# ------------------------------------------------ 绩效评价 ---------------------------------
 
 # 获取指定回答表的所有评价记录
 @router.get("/answers/{response_id}/evaluations", response_model=list[EvaluationAssignmentOut])
@@ -1018,7 +1013,6 @@ async def get_answer_evaluations(
         select(
             SurveyEvaluationAssignment.id,
             SurveyEvaluationAssignment.answer_id,
-            SurveyEvaluationAssignment.evaluator_name,
             SurveyEvaluationAssignment.evaluator_id,
             SurveyEvaluationAssignment.evaluation_score,
             SurveyEvaluationAssignment.status,
@@ -1031,3 +1025,36 @@ async def get_answer_evaluations(
     evaluations = [dict(row._mapping) for row in evaluation_result.all()]
 
     return evaluations
+
+
+# 根据survey_id和responses_id以及evaluator_id查询到该邀请人需要填写的所有问题信息。
+@router.get("/evaluator/questions")
+async def get_evaluation_question_ids(
+    survey_id: int = Query(..., description="问卷ID"),
+    response_id: int = Query(..., description="答卷ID"),
+    evaluator_id: int = Query(..., description="评价人ID"),
+    db: AsyncSession = Depends(get_db)
+):
+    try:
+        stmt = (
+            select(SurveyAnswer.question_id)
+            .join(SurveyEvaluationAssignment, SurveyEvaluationAssignment.answer_id == SurveyAnswer.id)
+            .join(SurveyResponse, SurveyAnswer.response_id == SurveyResponse.id)
+            .where(SurveyResponse.survey_id == survey_id)
+            .where(SurveyResponse.id == response_id)
+            .where(SurveyEvaluationAssignment.evaluator_id == evaluator_id)
+            .where(SurveyEvaluationAssignment.status == "pending")
+        )
+        result = await db.execute(stmt)
+        question_ids = result.scalars().all()
+
+        return {"data": question_ids}
+
+    except Exception as e:
+        import traceback
+        print(traceback.format_exc())
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="系统错误"
+        )
+

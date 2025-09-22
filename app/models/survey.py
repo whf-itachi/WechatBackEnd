@@ -5,6 +5,8 @@ from fastapi.openapi.models import Operation
 from sqlmodel import SQLModel, Field, Relationship
 from sqlalchemy import Column, DateTime, func, UniqueConstraint
 
+from app.models import User
+
 
 # ————————————————————————
 # 1. 问卷主表 (Survey)
@@ -180,8 +182,8 @@ class SurveyEvaluationAssignment(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
 
     answer_id: int = Field(foreign_key="survey_answers.id")  # 关联哪一个答案
-    evaluator_name: str  # 评价者名称
-    evaluator_id: Optional[int] = None  # 提交者id
+    # evaluator_id: Optional[int] = None  # 提交者id
+    evaluator_id: Optional[int] = Field(foreign_key="user.id")  # 改成外键
     evaluation_score: Optional[int] = None  # 给出的评分
     identity: Optional[str] = None  # 身份
     status: str = Field(default="pending")  # pending / completed
@@ -196,6 +198,7 @@ class SurveyEvaluationAssignment(SQLModel, table=True):
     )
     # 关系
     answer: "SurveyAnswer" = Relationship(back_populates="assignments")
+    evaluator: Optional["User"] = Relationship()
 
 
 # 工厂须知登记记录
