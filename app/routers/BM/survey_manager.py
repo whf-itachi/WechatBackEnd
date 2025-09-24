@@ -543,44 +543,52 @@ async def export_survey_data_excel(survey_id: int, db: AsyncSession = Depends(ge
     if not survey:
         raise HTTPException(status_code=404, detail="问卷不存在")
 
+    # 获取问题
     questions_result = await db.execute(
         select(SurveyQuestion).where(SurveyQuestion.survey_id == survey_id)
     )
     questions = questions_result.scalars().all()
+    normal_questions = [q for q in questions if q.type != "evaluate"]
+    evaluate_questions = [q for q in questions if q.type == "evaluate"]
 
+    # 获取 responses
     responses_result = await db.execute(
         select(SurveyResponse).where(SurveyResponse.survey_id == survey_id)
     )
     responses = responses_result.scalars().all()
 
-    # 分离 evaluate 类型问题
-    evaluate_questions = [q for q in questions if q.type == "evaluate"]
-    normal_questions = [q for q in questions if q.type != "evaluate"]
+    # 检查是否有评价任务
+    eval_exist_result = await db.execute(
+        select(func.count(SurveyEvaluationAssignment.id))
+        .join(SurveyAnswer, SurveyAnswer.id == SurveyEvaluationAssignment.answer_id)
+        .where(SurveyAnswer.response_id.in_([r.id for r in responses]))
+    )
+    has_eval_assignments = eval_exist_result.scalar() > 0
 
+    # 初始化 Excel
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.title = "问卷统计"
 
-    # === 构建表头（动态列）===
+    # === 构建表头 ===
     headers = []
-    question_to_col_index: Dict[int, int] = {}  # 普通问题ID -> 列索引
-    evaluate_cols: Dict[int, Dict[str, int]] = {}  # evaluate问题ID -> {name_col: index, score_col: index}
-
+    question_to_col_index: Dict[int, int] = {}
     col_idx = 1
+
+    if has_eval_assignments:
+        headers.append("填写人")
+        col_idx += 1
+
     for q in normal_questions:
         headers.append(q.text)
         question_to_col_index[q.id] = col_idx
         col_idx += 1
 
-    # 为每个 evaluate 问题添加两列
-    for q in evaluate_questions:
-        headers.append(f"{q.text}_evaluator_name")
-        headers.append(f"{q.text}_score")
-        evaluate_cols[q.id] = {
-            "name_col": col_idx,
-            "score_col": col_idx + 1
-        }
-        col_idx += 2
+    if has_eval_assignments:
+        for q in evaluate_questions:
+            headers.append(q.text)  # 直接写分数
+            question_to_col_index[q.id] = col_idx
+            col_idx += 1
 
     headers.append("提交时间")
     submit_time_col = col_idx
@@ -589,120 +597,126 @@ async def export_survey_data_excel(survey_id: int, db: AsyncSession = Depends(ge
     for cell in ws[1]:
         cell.font = Font(bold=True)
 
-    # === 处理每一份 response 及其评价 ===
+    # === 写入数据 ===
     for response in responses:
-        # 获取所有普通答案
+        # 获取普通答案
         answer_result = await db.execute(
             select(SurveyAnswer).where(SurveyAnswer.response_id == response.id)
         )
         answers = {ans.question_id: ans for ans in answer_result.scalars().all()}
 
-        # 获取所有评价任务（关联用户表以获取评价人姓名）
-        eval_assignments_result = await db.execute(
-            select(SurveyEvaluationAssignment, User)
-            .join(User, SurveyEvaluationAssignment.evaluator_id == User.id, isouter=True)
-            .join(SurveyAnswer, SurveyEvaluationAssignment.answer_id == SurveyAnswer.id)
-            .where(SurveyAnswer.response_id == response.id)
-        )
-        eval_assignments_with_user = eval_assignments_result.all()
+        if has_eval_assignments:
+            # 获取评价任务 + 填写人
+            eval_assignments_result = await db.execute(
+                select(SurveyEvaluationAssignment, User)
+                .join(User, SurveyEvaluationAssignment.evaluator_id == User.id, isouter=True)
+                .join(SurveyAnswer, SurveyEvaluationAssignment.answer_id == SurveyAnswer.id)
+                .where(SurveyAnswer.response_id == response.id)
+            )
+            eval_assignments_with_user = eval_assignments_result.all()
 
-        # 按评价人分组，同时记录身份
-        evaluators = {}  # 评价人姓名 -> { "is_master": bool, "assignments": list }
+            # 分组评价人
+            evaluators = {}
+            for ea, user in eval_assignments_with_user:
+                evaluator_name = user.name if user else "未知"
+                if evaluator_name not in evaluators:
+                    evaluators[evaluator_name] = {
+                        "is_master": ea.identity == "master",
+                        "assignments": []
+                    }
+                if not evaluators[evaluator_name]["is_master"]:
+                    evaluators[evaluator_name]["is_master"] = ea.identity == "master"
+                evaluators[evaluator_name]["assignments"].append(ea)
 
-        for ea, user in eval_assignments_with_user:
-            evaluator_name = user.name if user else "未知"
-            if evaluator_name not in evaluators:
-                evaluators[evaluator_name] = {
-                    "is_master": ea.identity == "master",
-                    "assignments": []
-                }
-            # 如果已经标记为master则保持，否则根据当前评价更新
-            if not evaluators[evaluator_name]["is_master"]:
-                evaluators[evaluator_name]["is_master"] = ea.identity == "master"
-            evaluators[evaluator_name]["assignments"].append((ea, user))
+            # 确保有主评价人
+            has_master = any(info["is_master"] for info in evaluators.values())
+            if not has_master:
+                evaluators["主评价人"] = {"is_master": True, "assignments": []}
 
-        # 确保至少有一个主评价人（如果没有则创建一个默认的）
-        has_master = any(info["is_master"] for info in evaluators.values())
-        if not has_master:
-            evaluators["主评价人"] = {
-                "is_master": True,
-                "assignments": []
-            }
-
-        # 按主评价人优先的顺序处理
-        sorted_evaluators = sorted(
-            evaluators.items(),
-            key=lambda x: not x[1]["is_master"]  # 主评价人排在前面
-        )
-
-        # 为每个评价人创建一行
-        for evaluator_name, info in sorted_evaluators:
-            row = [""] * len(headers)  # 初始化为空
-
-            # 主评价人显示所有普通问题数据，其他评价人不显示
-            if info["is_master"]:
-                for q in normal_questions:
-                    ans = answers.get(q.id)
-                    val = ""
-                    if ans:
-                        if q.type == "rating":
-                            val = str(ans.answer_rating) if ans.answer_rating is not None else ""
-                        elif q.type in ["single_choice", "multiple_choice"]:
-                            choices_result = await db.execute(
-                                select(SurveyOption, SurveyAnswerChoice)
-                                .join(SurveyAnswerChoice, SurveyOption.id == SurveyAnswerChoice.option_id)
-                                .where(SurveyAnswerChoice.answer_id == ans.id)
-                            )
-                            choices_rows = choices_result.all()
-                            values = []
-                            for choice, answer_choice in choices_rows:
-                                v = choice.value
-                                if choice.is_other and answer_choice.custom_value:
-                                    v += f" {answer_choice.custom_value}"
-                                values.append(v)
-                            val = ", ".join(values)
-                        elif q.type == "text":
-                            val = ans.answer_text or ""
-                        elif q.type == "meta_data":
-                            val = ans.answer_text or ""
-                        elif q.type == "target":
-                            val = ans.answer_text or ""
-                    row[question_to_col_index[q.id] - 1] = val  # 列索引从1开始，list从0
-
-            # 填充当前评价人的所有评价（同一人所有评价显示在同一行）
-            for ea, user in info["assignments"]:
-                ans = await db.get(SurveyAnswer, ea.answer_id)
-                if not ans:
-                    continue
-
-                q_id = ans.question_id
-                if q_id not in evaluate_cols:
-                    continue
-
-                # 填充评价相关列
-                name_col = evaluate_cols[q_id]["name_col"]
-                score_col = evaluate_cols[q_id]["score_col"]
-                row[name_col - 1] = evaluator_name
-                row[score_col - 1] = ea.evaluation_score or ""
-
-            # 提交时间
-            row[submit_time_col - 1] = response.submitted_at
+            sorted_evaluators = sorted(
+                evaluators.items(),
+                key=lambda x: not x[1]["is_master"]
+            )
 
             # 写入行
+            for evaluator_name, info in sorted_evaluators:
+                row = [""] * len(headers)
+                row[0] = evaluator_name  # 填写人
+
+                if info["is_master"]:
+                    for q in normal_questions:
+                        ans = answers.get(q.id)
+                        val = ""
+                        if ans:
+                            if q.type == "rating":
+                                val = str(ans.answer_rating or "")
+                            elif q.type in ["single_choice", "multiple_choice"]:
+                                choices_result = await db.execute(
+                                    select(SurveyOption, SurveyAnswerChoice)
+                                    .join(SurveyAnswerChoice, SurveyOption.id == SurveyAnswerChoice.option_id)
+                                    .where(SurveyAnswerChoice.answer_id == ans.id)
+                                )
+                                choices_rows = choices_result.all()
+                                values = []
+                                for choice, answer_choice in choices_rows:
+                                    v = choice.value
+                                    if choice.is_other and answer_choice.custom_value:
+                                        v += f" {answer_choice.custom_value}"
+                                    values.append(v)
+                                val = ", ".join(values)
+                            elif q.type in ["text", "meta_data", "target"]:
+                                val = ans.answer_text or ""
+                        row[question_to_col_index[q.id] - 1] = val
+
+                # 填写评价题答案
+                for ea in info["assignments"]:
+                    ans = await db.get(SurveyAnswer, ea.answer_id)
+                    if not ans or ans.question_id not in question_to_col_index:
+                        continue
+                    col = question_to_col_index[ans.question_id]
+                    row[col - 1] = str(ea.evaluation_score) if ea.evaluation_score is not None else ""
+
+                row[submit_time_col - 1] = response.submitted_at
+                ws.append(row)
+
+        else:
+            # 没有评价任务 -> 普通问卷
+            row = [""] * len(headers)
+            for q in normal_questions:
+                ans = answers.get(q.id)
+                val = ""
+                if ans:
+                    if q.type == "rating":
+                        val = str(ans.answer_rating or "")
+                    elif q.type in ["single_choice", "multiple_choice"]:
+                        choices_result = await db.execute(
+                            select(SurveyOption, SurveyAnswerChoice)
+                            .join(SurveyAnswerChoice, SurveyOption.id == SurveyAnswerChoice.option_id)
+                            .where(SurveyAnswerChoice.answer_id == ans.id)
+                        )
+                        choices_rows = choices_result.all()
+                        values = []
+                        for choice, answer_choice in choices_rows:
+                            v = choice.value
+                            if choice.is_other and answer_choice.custom_value:
+                                v += f" {answer_choice.custom_value}"
+                            values.append(v)
+                        val = ", ".join(values)
+                    elif q.type in ["text", "meta_data", "target"]:
+                        val = ans.answer_text or ""
+                row[question_to_col_index[q.id] - 1] = val
+
+            row[submit_time_col - 1] = response.submitted_at
             ws.append(row)
 
-    # 自动调整列宽
+    # 自动列宽
     for column in ws.columns:
         max_length = 0
         column_letter = get_column_letter(column[0].column)
         for cell in column:
-            try:
-                if cell.value:
-                    max_length = max(max_length, len(str(cell.value)))
-            except:
-                pass
-        adjusted_width = min(max_length + 2, 50)  # 限制最大宽度
-        ws.column_dimensions[column_letter].width = adjusted_width
+            if cell.value:
+                max_length = max(max_length, len(str(cell.value)))
+        ws.column_dimensions[column_letter].width = min(max_length + 2, 50)
 
     output = BytesIO()
     wb.save(output)
