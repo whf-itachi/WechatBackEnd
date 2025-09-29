@@ -212,6 +212,7 @@ async def get_company_pdf_page(filename: str, page_num: int):
 
     # 1. 先检查内存缓存
     if cache_key in memory_cache:
+        print(f"内存缓存命中: {cache_key}")
         return Response(
             content=memory_cache[cache_key],
             media_type="image/png"
@@ -219,6 +220,7 @@ async def get_company_pdf_page(filename: str, page_num: int):
 
     # 2. 检查磁盘缓存
     if os.path.isfile(page_file):
+        print(f"磁盘缓存命中: {cache_key}")
         # 读取磁盘文件并加入内存缓存
         try:
             with open(page_file, "rb") as f:
@@ -233,6 +235,7 @@ async def get_company_pdf_page(filename: str, page_num: int):
 
     # 3. 缓存不存在，生成新的
     try:
+        print(f"缓存未命中，生成新内容: {cache_key}")
         doc = fitz.open(pdf_path)
         if page_num < 1 or page_num > len(doc):
             doc.close()
