@@ -84,7 +84,7 @@ def get_company_pdf_page(filename: str, page_num: int):
 
         images = convert_from_path(
             pdf_path,
-            dpi=150,  # 提高 DPI
+            dpi=90,  # 提高 DPI
             first_page=page_num
         )
         images[0].save(page_file, "PNG")  # 无损保存
