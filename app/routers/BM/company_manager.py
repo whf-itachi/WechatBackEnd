@@ -5,6 +5,8 @@ from pathlib import Path
 from app.logger import get_logger
 from app.config import settings
 
+from pdf2image import convert_from_path
+
 router = APIRouter()
 logger = get_logger('company_router')
 
@@ -59,3 +61,25 @@ async def get_pdf_file(filename: str, quality: str):
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="获取PDF文件失败"
         )
+
+
+PDF_DIR = "/var/www/company/pdf"
+CACHE_DIR = "/var/www/company/pdf_cache"
+
+
+@router.get("/introduce/{filename}/page/{page_num}")
+def get_company_pdf_page(filename: str, page_num: int):
+    pdf_path = os.path.join(PDF_DIR, filename)
+    if not os.path.isfile(pdf_path):
+        raise HTTPException(status_code=404, detail="PDF 不存在")
+
+    cache_folder = os.path.join(CACHE_DIR, filename)
+    os.makedirs(cache_folder, exist_ok=True)
+
+    page_file = os.path.join(cache_folder, f"page_{page_num}.jpg")
+
+    if not os.path.isfile(page_file):
+        images = convert_from_path(pdf_path, dpi=72, first_page=page_num, last_page=page_num)
+        images[0].save(page_file, "JPEG", quality=70)
+
+    return FileResponse(page_file, media_type="image/jpeg")
