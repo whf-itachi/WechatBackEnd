@@ -79,7 +79,14 @@ def get_company_pdf_page(filename: str, page_num: int):
     page_file = os.path.join(cache_folder, f"page_{page_num}.jpg")
 
     if not os.path.isfile(page_file):
-        images = convert_from_path(pdf_path, dpi=72, first_page=page_num, last_page=page_num)
-        images[0].save(page_file, "JPEG", quality=70)
+        # images = convert_from_path(pdf_path, dpi=72, first_page=page_num, last_page=page_num)
+        # images[0].save(page_file, "JPEG", quality=70)
+
+        images = convert_from_path(
+            pdf_path,
+            dpi=150,  # 提高 DPI
+            first_page=page_num
+        )
+        images[0].save(page_file, "PNG")  # 无损保存
 
     return FileResponse(page_file, media_type="image/jpeg")
