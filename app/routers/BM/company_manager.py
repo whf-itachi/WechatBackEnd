@@ -8,7 +8,7 @@ from app.config import settings
 from fastapi.concurrency import run_in_threadpool
 import fitz  # PyMuPDF
 from datetime import datetime, timedelta
-from cachetools import LRUCache, TTLCache  # 需要安装cachetools: pip install cachetools
+from cachetools import TTLCache
 from pdf2image import convert_from_path
 
 router = APIRouter()
