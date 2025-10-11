@@ -81,7 +81,6 @@ async def create_batch_evaluation_assignments(
 
     except Exception as e:
         import traceback
-        print(traceback.format_exc())
         raise HTTPException(
             status_code=500,
             detail="系统错误"
@@ -130,7 +129,6 @@ async def create_survey(survey_data: SurveyCreate, db: AsyncSession = Depends(ge
         }
         return SurveyOut(**survey_data)
     except Exception as e:
-        print(traceback.format_exc())
         await db.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -183,7 +181,6 @@ async def create_summary(data: SummaryCreateIn,db: AsyncSession = Depends(get_db
 # 提交问卷回答
 @router.post("/{survey_id}/responses", response_model=dict)
 async def submit_response(survey_id: int,data: ResponseSubmit,db: AsyncSession = Depends(get_db)):
-    print(data, "00000000000000000000000")
     # --------------------------
     # 1. 基础校验：问卷存在性 + 有效期
     # --------------------------
@@ -213,7 +210,6 @@ async def submit_response(survey_id: int,data: ResponseSubmit,db: AsyncSession =
     evaluate_question_ids = set(evaluate_question_result.scalars().all())
 
     user_name = await db.scalar(select(User.name).where(User.id == data.evaluator_id))
-    print(".get user_name is : ", user_name)
 
     response = SurveyResponse(survey_id=survey_id)
     db.add(response)
@@ -276,7 +272,6 @@ async def submit_response(survey_id: int,data: ResponseSubmit,db: AsyncSession =
                     status_code=400,
                     detail=f"问题ID[{ans.question_id}]为多人评分类问题，需传入evaluator_id（评价者ID）"
                 )
-            print("111111111111:", answer.id, user_name, ans.answer_evaluate)
             # 创建评价任务记录
             evaluation_assignment = SurveyEvaluationAssignment(
                 answer_id=answer.id,  # 关联当前答案（即“被评价的答案”）
@@ -307,7 +302,6 @@ async def submit_response(survey_id: int,data: ResponseSubmit,db: AsyncSession =
     survey.current_responses += 1  # 自增提交次数
     await db.commit()  # 批量写入所有记录（response/answer/choice/evaluation）
     await db.refresh(response)  # 刷新对象，获取最新数据库状态（可选）
-    print("2222222222:", evaluate_question_ids)
 
     # --------------------------
     # 6. 返回结果（含关键ID，便于后续查询）
@@ -334,7 +328,6 @@ async def share_evaluation(
     - 调用add_question_ename函数避免重复存储
     - 返回操作结果及时间戳
     """
-    print("---------------: share_evaluation")
     try:
         result = await add_question_ename(
             token=data.temporary_token,

@@ -112,7 +112,6 @@ async def update_user_type(
 
         # 仅更新user_type字段
         if user_update.user_type is not None:
-            print(".....................", user_update.user_type)
             db_user.user_type = user_update.user_type
 
         await db.commit()

@@ -89,7 +89,6 @@ async def delete_question(question_id: int, db: AsyncSession = Depends(get_db)):
     question = result.scalar_one_or_none()
     if not question:
         raise HTTPException(status_code=404, detail="问题不存在")
-    print(question.file_id)
     if question.file_id:
         await async_delete_rag_document(db, file_id=question.file_id, f_type="question")
     else:
@@ -151,7 +150,6 @@ async def delete_question(document_id: int, db: AsyncSession = Depends(get_db)):
     document = result.scalar_one_or_none()
     if not document:
         raise HTTPException(status_code=404, detail="问题不存在")
-    print(document.file_id)
     if document.file_id:
         # 对于上传了大模型的文档需要调用大模型删除函数
         await async_delete_rag_document(db, file_id=document.file_id, f_type="document")

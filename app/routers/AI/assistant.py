@@ -49,7 +49,6 @@ class FileIdsRequest(BaseModel):
 # 根据文档id列表查询相关附件信息
 @router.post("/chat/attachments")
 async def get_attachments_by_issue(request_data: FileIdsRequest, db: AsyncSession = Depends(get_db)):
-    print(request_data, ")))))))))))))))))))))))")
     file_ids = request_data.file_ids  # 获取到文件ID列表
     size = request_data.size
 

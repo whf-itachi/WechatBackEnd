@@ -32,7 +32,7 @@ async def get_pdf_file(filename: str, quality: str):
 
         # 构建完整文件路径
         file_path = file_dir / f"{filename}.pdf"
-        print("pdf完整的路径为：", file_path)
+        logger.error("pdf完整的路径为：", file_path)
 
         # 验证文件是否存在
         if not os.path.exists(file_path):
@@ -60,7 +60,7 @@ async def get_pdf_file(filename: str, quality: str):
         raise
     except Exception as e:
         import traceback
-        print(traceback.format_exc())
+        logger.error(traceback.format_exc())
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="获取PDF文件失败"
@@ -150,7 +150,7 @@ def convert_pdf_page(pdf_path, page_num, output_path=None, dpi=90):
         doc.close()
         return img_bytes
     except Exception as e:
-        print(f"转换PDF页面出错: {e}")
+        logger.error(f"转换PDF页面出错: {e}")
         return None
 
 
@@ -190,7 +190,7 @@ def pre_generate_cache(filename, max_pages=50):
                     memory_cache[cache_key] = img_bytes
         return True
     except Exception as e:
-        print(f"预生成缓存出错: {e}")
+        logger.error(f"预生成缓存出错: {e}")
         return False
 
 
@@ -212,7 +212,7 @@ async def get_company_pdf_page(filename: str, page_num: int):
 
     # 1. 先检查内存缓存
     if cache_key in memory_cache:
-        print(f"内存缓存命中: {cache_key}")
+        logger.error(f"内存缓存命中: {cache_key}")
         return Response(
             content=memory_cache[cache_key],
             media_type="image/png"
@@ -220,7 +220,7 @@ async def get_company_pdf_page(filename: str, page_num: int):
 
     # 2. 检查磁盘缓存
     if os.path.isfile(page_file):
-        print(f"磁盘缓存命中: {cache_key}")
+        logger.error(f"磁盘缓存命中: {cache_key}")
         # 读取磁盘文件并加入内存缓存
         try:
             with open(page_file, "rb") as f:
@@ -231,11 +231,11 @@ async def get_company_pdf_page(filename: str, page_num: int):
                 media_type="image/png"
             )
         except Exception as e:
-            print(f"读取缓存文件出错: {e}")
+            logger.error(f"读取缓存文件出错: {e}")
 
     # 3. 缓存不存在，生成新的
     try:
-        print(f"缓存未命中，生成新内容: {cache_key}")
+        logger.error(f"缓存未命中，生成新内容: {cache_key}")
         doc = fitz.open(pdf_path)
         if page_num < 1 or page_num > len(doc):
             doc.close()

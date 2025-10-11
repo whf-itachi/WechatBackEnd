@@ -31,7 +31,6 @@ async def get_devices(
     查询所有设备，可通过 keyword 进行模糊匹配
     """
     try:
-        print("------------------------>")
         stmt = select(DeviceTable)
         if keyword:
             # 模糊匹配 device_name 字段
@@ -76,9 +75,6 @@ async def get_list_device_models_with_devices(db: AsyncSession = Depends(get_db)
                     for d in model.devices  # 注意：这里 devices 是 relationship
                 ]
             })
-
-        print("=======================")
-        print(data)
 
         return data
 
@@ -238,7 +234,6 @@ async def create_ticket(
             "f_type": "ticket",
             "file_name": f"ticket_{ticket.id}.txt"
         }
-        print("get the content is : ", content)
         background_tasks.add_task(process_full_rag_upload, file_bytes, dict_data)
 
         return {"message": "工单创建成功", "ticket_id": ticket.id, "device_name": device.device_name}

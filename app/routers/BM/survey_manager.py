@@ -1,5 +1,4 @@
 import traceback
-from datetime import timezone
 
 import openpyxl
 from openpyxl.styles import Font
@@ -290,7 +289,6 @@ async def get_survey(survey_id: int, db: AsyncSession = Depends(get_db)):
                 "questions": question_list
                 }
     except Exception as e:
-        print(traceback.format_exc())
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="系统错误"
@@ -851,7 +849,6 @@ async def submit_factory_notice(notice_data: FactoryNoticeCreate,db: AsyncSessio
     提交工厂须知登记信息，创建一条历史记录
     """
     try:
-        print("--------------<>")
         # 创建新记录
         new_record = FactoryNoticeHistory(
             company_name=notice_data.company_name.strip(),
@@ -1021,7 +1018,6 @@ async def get_evaluation_question_ids(
 
     except Exception as e:
         import traceback
-        print(traceback.format_exc())
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="系统错误"
