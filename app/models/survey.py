@@ -1,9 +1,8 @@
 from datetime import datetime
 from typing import Optional, List
 
-from fastapi.openapi.models import Operation
 from sqlmodel import SQLModel, Field, Relationship
-from sqlalchemy import Column, DateTime, func, UniqueConstraint
+from sqlalchemy import Column, DateTime, func, UniqueConstraint, Text
 
 from app.models import User
 
@@ -16,7 +15,12 @@ class SurveyTable(SQLModel, table=True):
 
     id: Optional[int] = Field(default=None, primary_key=True)
     title: str = Field(max_length=255)
-    description: Optional[str] = Field(default=None, max_length=1000)
+    # 将description改为TEXT类型
+    description: Optional[str] = Field(
+        default=None,
+        sa_column=Column(Text),  # 使用Text类型替代默认的VARCHAR
+        description="问卷描述，支持大文本内容"
+    )
     current_responses: int = Field(default=0)
     require_login: bool = Field(default=False, description="是否需要登录才能填写问卷")
 
@@ -46,7 +50,11 @@ class SurveyQuestion(SQLModel, table=True):
 
     id: Optional[int] = Field(default=None, primary_key=True)
     survey_id: int = Field(foreign_key="surveys.id")
-    text: str
+    text: Optional[str] = Field(
+        default=None,
+        sa_column=Column(Text),  # 使用Text类型替代默认的VARCHAR
+        description="问题描述，支持大文本内容"
+    )
     type: str = Field(max_length=50)  # single_choice, multiple_choice, rating, text, meta_data, evaluate, target
     required: bool = Field(default=False)
 
