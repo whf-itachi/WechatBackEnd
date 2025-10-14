@@ -249,7 +249,7 @@ async def get_company_pdf_page(filename: str, page_num: int):
         pdf_path,
         page_num,
         page_file,  # 保存到磁盘
-        dpi=90
+        dpi=150
     )
 
     if not img_bytes:
