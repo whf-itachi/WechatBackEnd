@@ -546,6 +546,13 @@ async def export_survey_data_excel(survey_id: int, db: AsyncSession = Depends(ge
         select(SurveyQuestion).where(SurveyQuestion.survey_id == survey_id)
     )
     questions = questions_result.scalars().all()
+
+    # 创建问题ID到排序序号的映射字典，而不是给对象添加属性
+    question_sort_index = {}
+    for index, q in enumerate(questions, start=1):
+        question_sort_index[q.id] = index  # 存储每个问题ID对应的序号
+
+    # 分离普通问题和评价问题（保持原有顺序）
     normal_questions = [q for q in questions if q.type != "evaluate"]
     evaluate_questions = [q for q in questions if q.type == "evaluate"]
 
@@ -577,16 +584,12 @@ async def export_survey_data_excel(survey_id: int, db: AsyncSession = Depends(ge
         headers.append("填写人")
         col_idx += 1
 
-    for q in normal_questions:
-        headers.append(q.text)
+    # 按原始顺序（ID排序）添加所有问题的序号作为表头
+    for q in questions:
+        # 使用映射字典获取序号
+        headers.append(str(question_sort_index[q.id]))
         question_to_col_index[q.id] = col_idx
         col_idx += 1
-
-    if has_eval_assignments:
-        for q in evaluate_questions:
-            headers.append(q.text)  # 直接写分数
-            question_to_col_index[q.id] = col_idx
-            col_idx += 1
 
     headers.append("提交时间")
     submit_time_col = col_idx
