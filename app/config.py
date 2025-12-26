@@ -13,6 +13,11 @@ class Settings(BaseSettings):
     DB_PASSWORD: str
     DB_NAME: str
     
+    # Redis配置
+    REDIS_HOST: str = "localhost"
+    REDIS_PORT: int = 6379
+    REDIS_PASSWORD: str = ""
+    
     # 数据库连接池配置
     POOL_SIZE: int = 5
     MAX_OVERFLOW: int = 10
@@ -31,6 +36,16 @@ class Settings(BaseSettings):
         # 确保密码中的特殊字符被正确编码
         encoded_password = self.DB_PASSWORD.replace('@', '%40')
         return f"mysql+aiomysql://{self.DB_USER}:{encoded_password}@{self.DB_HOST}:{self.DB_PORT}/{self.DB_NAME}"
+    
+    @property
+    def REDIS_URL(self) -> str:
+        """获取Redis连接URL"""
+        if self.REDIS_PASSWORD:
+            # 如果有密码，使用带认证的URL格式
+            return f"redis://:{self.REDIS_PASSWORD}@{self.REDIS_HOST}:{self.REDIS_PORT}"
+        else:
+            # 无密码连接
+            return f"redis://{self.REDIS_HOST}:{self.REDIS_PORT}"
     
     # JWT配置
     JWT_SECRET_KEY: str
