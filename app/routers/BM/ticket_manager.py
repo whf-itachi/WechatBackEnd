@@ -2,6 +2,9 @@ from fastapi import APIRouter, HTTPException, Depends, status, UploadFile, File,
 from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import selectinload
+from datetime import datetime
+import tempfile
+import os
 
 from app.db_services.database import get_db
 from app.dependencies.BM_auth import bm_verify_token
@@ -9,10 +12,11 @@ from app.services.baiLian_service import process_full_rag_upload
 from app.schemas.ticket_schema import TicketResponse, TicketCreate
 from app.models.user import User
 from app.logger import get_logger
-import os
 from app.models.ticket import *
 from sqlalchemy import select, func
 import json
+import openpyxl
+from openpyxl.styles import Font, Alignment, PatternFill
 
 from app.services.ticket_service import delete_attachment_by_id, delete_ticket_service, handle_attachment_files
 from app.services.user_service import get_user_by_id
@@ -446,3 +450,117 @@ async def preview_attachment(attachment_id: int, db: AsyncSession = Depends(get_
         media_type=attachment.file_type or "application/octet-stream",
         headers={"Content-Disposition": f"inline; filename={attachment.file_name}"}
     )
+
+
+@router.get("/export/excel")
+async def export_tickets_excel(
+    db: AsyncSession = Depends(get_db),
+    token_payload: dict = Depends(bm_verify_token)
+):
+    """导出所有工单到Excel表格"""
+    logger.info("开始导出工单Excel")
+    try:
+        current_user = await get_user_by_id(db, token_payload.get("user_id"))
+        
+        # 查询所有工单数据
+        query = (
+            select(Ticket, User.name.label("creator_name"))
+            .join(User, Ticket.user_id == User.id)
+            .join(DeviceTable, Ticket.device_id == DeviceTable.id)
+            .join(DeviceModel, DeviceTable.device_model_id == DeviceModel.id)
+            .options(
+                selectinload(Ticket.device).selectinload(DeviceTable.model),
+                selectinload(Ticket.device).selectinload(DeviceTable.factory).selectinload(Factory.customer),
+                selectinload(Ticket.attachments)
+            )
+            .order_by(Ticket.create_at.desc())
+        )
+        
+        result = await db.execute(query)
+        rows = result.all()
+        
+        # 创建Excel工作簿
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "工单数据"
+        
+        # 设置标题行
+        headers = [
+            "工单ID", "设备编号", "设备型号", "客户名称", "设备地址", 
+            "故障现象", "故障原因", "处理方法", "处理人", "创建人", 
+            "处理状态", "创建时间", "附件文件名"
+        ]
+        
+        # 写入标题行
+        for col_idx, header in enumerate(headers, 1):
+            cell = ws.cell(row=1, column=col_idx, value=header)
+            cell.font = Font(bold=True, color="FFFFFF")
+            cell.fill = PatternFill(start_color="366092", end_color="366092", fill_type="solid")
+            cell.alignment = Alignment(horizontal="center", vertical="center")
+        
+        # 写入数据行
+        for row_idx, (ticket, creator_name) in enumerate(rows, 2):
+            device = ticket.device
+            model = device.model if device else None
+            factory = device.factory if device else None
+            customer = factory.customer if factory else None
+            
+            # 获取附件文件名列表
+            attachment_names = ", ".join([att.file_name for att in ticket.attachments]) if ticket.attachments else ""
+            
+            # 状态映射
+            status_map = {0: "待处理", 1: "处理中", 2: "已完成"}
+            status_text = status_map.get(ticket.status, "未知")
+            
+            # 写入数据
+            data = [
+                ticket.id,
+                device.device_name if device else "",
+                model.device_model if model else "",
+                customer.customer if customer else "",
+                factory.address if factory else "",
+                ticket.fault_phenomenon,
+                ticket.fault_reason or "",
+                ticket.handling_method or "",
+                ticket.handler,
+                creator_name or "",
+                status_text,
+                ticket.create_at.strftime("%Y-%m-%d %H:%M:%S") if ticket.create_at else "",
+                attachment_names
+            ]
+            
+            for col_idx, value in enumerate(data, 1):
+                ws.cell(row=row_idx, column=col_idx, value=value)
+        
+        # 调整列宽
+        column_widths = [10, 15, 15, 20, 25, 30, 30, 30, 12, 12, 10, 20, 30]
+        for col_idx, width in enumerate(column_widths, 1):
+            ws.column_dimensions[openpyxl.utils.get_column_letter(col_idx)].width = width
+        
+        # 创建临时文件
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"工单数据导出_{timestamp}.xlsx"
+        
+        # 保存到临时目录
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.xlsx') as tmp_file:
+            wb.save(tmp_file.name)
+            temp_path = tmp_file.name
+        
+        logger.info(f"工单Excel导出成功，文件名: {filename}")
+        
+        # 处理中文文件名编码问题
+        import urllib.parse
+        encoded_filename = urllib.parse.quote(filename.encode('utf-8'))
+        
+        return FileResponse(
+            path=temp_path,
+            filename=filename,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={
+                "Content-Disposition": f"attachment; filename*=UTF-8''{encoded_filename}"
+            }
+        )
+        
+    except Exception as e:
+        logger.error(f"导出工单Excel失败: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"导出Excel失败: {str(e)}")
