@@ -65,13 +65,13 @@ async def get_user_by_id(session: AsyncSessionDep, user_id: int) -> User:
 async def verify_user_login(session: AsyncSessionDep, login_data: UserLogin) -> Tuple[User, str]:
     """验证用户登录"""
     errors = []
-    
+
     if not login_data.name:
         errors.append("用户名不能为空")
-        
+
     if not login_data.password:
         errors.append("密码不能为空")
-        
+
     if not errors:
         result = await session.execute(
             select(User).where(or_(User.name == login_data.name,User.phone == login_data.name))
@@ -84,7 +84,9 @@ async def verify_user_login(session: AsyncSessionDep, login_data: UserLogin) -> 
             errors.append("密码错误")
         elif not user_info.is_active:
             errors.append("用户已被禁用")
-    else:
+    
+    # 检查是否有错误
+    if errors:
         raise HTTPException(
             status_code=401,
             detail={
@@ -92,13 +94,13 @@ async def verify_user_login(session: AsyncSessionDep, login_data: UserLogin) -> 
                 "errors": errors
             }
         )
-    
+
     # 生成访问令牌
     access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = create_access_token(
         data={"user_id": str(user_info.id), "user_type": str(user_info.user_type)}, expires_delta=access_token_expires
     )
-    
+
     return user_info, access_token
 
 # 创建用户

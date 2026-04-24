@@ -12,6 +12,7 @@ from sqlalchemy.orm import joinedload, selectinload
 import qrcode
 from io import BytesIO
 from app.db_services.database import get_db
+from app.dependencies.BM_auth import bm_verify_token
 from app.logger import get_logger
 from app.models import User
 from app.models.survey import SurveyTable, SurveyQuestion, SurveyOption, SurveyResponse, SurveyAnswer, \
@@ -79,7 +80,7 @@ async def survey_responses_list(
 
 # 获取具体问卷回答详情
 @router.get("/answer/{response_id}", response_model=ResponseDetailOut)
-async def response_answer_detail(response_id: int, db: AsyncSession = Depends(get_db)):
+async def response_answer_detail(response_id: int, db: AsyncSession = Depends(get_db), token_payload: dict = Depends(bm_verify_token)):
     result = await db.execute(
         select(SurveyResponse)
         .where(SurveyResponse.id == response_id)
@@ -165,7 +166,7 @@ async def response_answer_detail(response_id: int, db: AsyncSession = Depends(ge
 
 # 问卷统计
 @router.get("/statistics/{survey_id}", response_model=SurveyStatisticsResponse)
-async def get_survey_statistics(survey_id: int, db: AsyncSession = Depends(get_db)):
+async def get_survey_statistics(survey_id: int, db: AsyncSession = Depends(get_db), token_payload: dict = Depends(bm_verify_token)):
     survey_result = await db.execute(
         select(SurveyTable).where(SurveyTable.id == survey_id)
     )
@@ -221,7 +222,7 @@ async def get_survey_statistics(survey_id: int, db: AsyncSession = Depends(get_d
 
 # ———————————————— 获取所有问卷（带分页、过滤） ————————————————
 @router.get("/", response_model=Dict[str, Union[int, List[SurveyOut]]])
-async def list_surveys(skip: int = 0, limit: int = 10, db: AsyncSession = Depends(get_db)):
+async def list_surveys(skip: int = 0, limit: int = 10, db: AsyncSession = Depends(get_db), token_payload: dict = Depends(bm_verify_token)):
     # 查询总数量
     count_stmt = select(func.count()).select_from(SurveyTable)
     total_result = await db.execute(count_stmt)
@@ -327,7 +328,7 @@ async def update_survey(survey_id: int, survey_data: SurveyUpdate, db: AsyncSess
 
 # ———————————————— 删除问卷 ————————————————  暂时没有使用
 @router.delete("/{survey_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_survey(survey_id: int, db: AsyncSession = Depends(get_db)):
+async def delete_survey(survey_id: int, db: AsyncSession = Depends(get_db), token_payload: dict = Depends(bm_verify_token)):
     result = await db.execute(select(SurveyTable).where(SurveyTable.id == survey_id))
     survey = result.scalar_one_or_none()
     if not survey:
@@ -339,7 +340,7 @@ async def delete_survey(survey_id: int, db: AsyncSession = Depends(get_db)):
 
 # ———————————————— 生成问卷二维码 ————————————————
 @router.get("/{survey_id}/qr")
-async def generate_qr(request: Request, survey_id: int):
+async def generate_qr(request: Request, survey_id: int, token_payload: dict = Depends(bm_verify_token)):
     """
     问卷二维码
     """
@@ -375,7 +376,7 @@ async def generate_qr(request: Request, summary_id: int):
 
 # ———————————————— 问卷统计 ————————————————
 @router.get("/{survey_id}/statistics")
-async def get_survey_statistics_detail(survey_id: int, db: AsyncSession = Depends(get_db)):
+async def get_survey_statistics_detail(survey_id: int, db: AsyncSession = Depends(get_db), token_payload: dict = Depends(bm_verify_token)):
     survey = await db.get(SurveyTable, survey_id)
     if not survey:
         raise HTTPException(status_code=404, detail="问卷不存在")
@@ -437,7 +438,7 @@ async def get_survey_statistics_detail(survey_id: int, db: AsyncSession = Depend
 
 # ———————————————— 下载问卷统计表 ————————————————
 @router.get("/whf/{survey_id}/download_excel")
-async def export_survey_data_excel(survey_id: int, db: AsyncSession = Depends(get_db)):
+async def export_survey_data_excel(survey_id: int, db: AsyncSession = Depends(get_db), token_payload: dict = Depends(bm_verify_token)):
     survey = await db.get(SurveyTable, survey_id)
     if not survey:
         raise HTTPException(status_code=404, detail="问卷不存在")
@@ -536,7 +537,7 @@ async def export_survey_data_excel(survey_id: int, db: AsyncSession = Depends(ge
 
 
 @router.get("/{survey_id}/download_excel")
-async def export_survey_data_excel(survey_id: int, db: AsyncSession = Depends(get_db)):
+async def export_survey_data_excel(survey_id: int, db: AsyncSession = Depends(get_db), token_payload: dict = Depends(bm_verify_token)):
     survey = await db.get(SurveyTable, survey_id)
     if not survey:
         raise HTTPException(status_code=404, detail="问卷不存在")

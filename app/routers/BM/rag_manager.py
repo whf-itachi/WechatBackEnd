@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from datetime import datetime, timezone
 
 from app.db_services.database import get_db
+from app.dependencies.BM_auth import bm_verify_token
 from app.logger import get_logger
 from app.models.rag import Question, Documents
 from app.schemas.rag_schema import QuestionCreate, QuestionRead, QuestionUpdate
@@ -17,7 +18,7 @@ logger = get_logger('rag_router')
 
 # 创建问题
 @router.post("/questions", response_model=QuestionRead)
-async def create_question(data: QuestionCreate, db: AsyncSession = Depends(get_db)):
+async def create_question(data: QuestionCreate, db: AsyncSession = Depends(get_db), token_payload: dict = Depends(bm_verify_token)):
     question = Question(
         question=data.question
     )
@@ -28,7 +29,7 @@ async def create_question(data: QuestionCreate, db: AsyncSession = Depends(get_d
 
 # 获取问题列表（支持分页）
 @router.get("/questions", response_model=list[QuestionRead])
-async def list_questions(skip: int = 0, limit: int = 10, db: AsyncSession = Depends(get_db)):
+async def list_questions(skip: int = 0, limit: int = 10, db: AsyncSession = Depends(get_db), token_payload: dict = Depends(bm_verify_token)):
     result = await db.execute(
         select(Question).where(Question.is_delete == 0).offset(skip).limit(limit)
     )
@@ -36,7 +37,7 @@ async def list_questions(skip: int = 0, limit: int = 10, db: AsyncSession = Depe
 
 # 获取单个问题
 @router.get("/questions/{question_id}", response_model=QuestionRead)
-async def get_question(question_id: int, db: AsyncSession = Depends(get_db)):
+async def get_question(question_id: int, db: AsyncSession = Depends(get_db), token_payload: dict = Depends(bm_verify_token)):
     result = await db.execute(select(Question).where(Question.id == question_id, Question.is_delete == 0))
     question = result.scalar_one_or_none()
     if not question:
@@ -49,7 +50,8 @@ async def update_question(
     background_tasks: BackgroundTasks,
     question_id: int,
     data: QuestionUpdate,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    token_payload: dict = Depends(bm_verify_token)
 ):
     result = await db.execute(select(Question).where(Question.id == question_id, Question.is_delete == 0))
     question = result.scalar_one_or_none()
@@ -84,7 +86,7 @@ async def update_question(
 
 # 删除问题
 @router.delete("/questions/{question_id}")
-async def delete_question(question_id: int, db: AsyncSession = Depends(get_db)):
+async def delete_question(question_id: int, db: AsyncSession = Depends(get_db), token_payload: dict = Depends(bm_verify_token)):
     result = await db.execute(select(Question).where(Question.id == question_id, Question.is_delete == 0))
     question = result.scalar_one_or_none()
     if not question:
@@ -104,7 +106,8 @@ async def delete_question(question_id: int, db: AsyncSession = Depends(get_db)):
 async def add_rag_documents(background_tasks: BackgroundTasks,
                             file: UploadFile = File(...),
                             tag: str = Form(""),
-                            db:AsyncSession = Depends(get_db)):
+                            db:AsyncSession = Depends(get_db),
+                            token_payload: dict = Depends(bm_verify_token)):
     max_file_size = 1024 * 1024 * 100  # 100 MB
     if file.size > max_file_size:
         raise HTTPException(status_code=400, detail="文件超过100M请拆分后重新上传")
@@ -136,7 +139,7 @@ async def add_rag_documents(background_tasks: BackgroundTasks,
 
 # 获取上传文档列表（支持分页）
 @router.get("/documents")
-async def list_questions(skip: int = 0, limit: int = 10, db: AsyncSession = Depends(get_db)):
+async def list_questions(skip: int = 0, limit: int = 10, db: AsyncSession = Depends(get_db), token_payload: dict = Depends(bm_verify_token)):
     result = await db.execute(
         select(Documents).where(Documents.is_delete == 0).offset(skip).limit(limit)
     )
@@ -145,7 +148,7 @@ async def list_questions(skip: int = 0, limit: int = 10, db: AsyncSession = Depe
 
 # 删除rag文档
 @router.delete("/documents/{document_id}")
-async def delete_question(document_id: int, db: AsyncSession = Depends(get_db)):
+async def delete_question(document_id: int, db: AsyncSession = Depends(get_db), token_payload: dict = Depends(bm_verify_token)):
     result = await db.execute(select(Documents).where(Documents.id == document_id))
     document = result.scalar_one_or_none()
     if not document:

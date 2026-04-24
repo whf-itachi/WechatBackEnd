@@ -4,6 +4,7 @@ from sqlmodel import select
 from starlette.responses import JSONResponse
 
 from app.db_services.database import get_db
+from app.dependencies.BM_auth import bm_verify_token
 from app.logger import get_logger
 from app.models import User
 from app.schemas.user_schema import UserResponse, UserCreate, UserTypeUpdate, UserLogin
@@ -64,7 +65,7 @@ async def register_user(user_data: UserCreate, db: AsyncSession = Depends(get_db
 
 # 查询所有用户接口
 @router.get("/all")
-async def get_all_users(db: AsyncSession = Depends(get_db)):
+async def get_all_users(db: AsyncSession = Depends(get_db), token_payload: dict = Depends(bm_verify_token)):
     """获取所有用户"""
     result = await db.execute(select(User))
     return result.scalars().all()
@@ -72,7 +73,7 @@ async def get_all_users(db: AsyncSession = Depends(get_db)):
 
 # 后台操作 新增用户
 @router.post("/create", response_model=UserResponse)
-async def create_user_endpoint(user_data: UserCreate, db: AsyncSession = Depends(get_db)):
+async def create_user_endpoint(user_data: UserCreate, db: AsyncSession = Depends(get_db), token_payload: dict = Depends(bm_verify_token)):
     """新增用户"""
     try:
         user, token = await create_user_service(db, user_data)
@@ -100,7 +101,8 @@ async def create_user_endpoint(user_data: UserCreate, db: AsyncSession = Depends
 async def update_user_type(
         user_id: int,
         user_update: UserTypeUpdate,
-        db: AsyncSession = Depends(get_db)
+        db: AsyncSession = Depends(get_db),
+        token_payload: dict = Depends(bm_verify_token)
 ):
     """仅更新用户类型字段"""
     try:
@@ -133,7 +135,8 @@ async def update_user_type(
 @router.delete("/delete/{user_id}")
 async def delete_user(
         user_id: int,
-        db: AsyncSession = Depends(get_db)
+        db: AsyncSession = Depends(get_db),
+        token_payload: dict = Depends(bm_verify_token)
 ):
     """删除用户"""
     try:

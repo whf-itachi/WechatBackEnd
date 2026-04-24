@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.db_services.database import get_db
+from app.dependencies.BM_auth import bm_verify_token
 from app.db_services.redis_client import *
 from app.logger import get_logger
 from app.models import User
@@ -18,7 +19,8 @@ logger = get_logger('Survey_post_router')
 @router.post("/evaluation/responses")
 async def create_batch_evaluation_assignments(
     data: CreateEvaluationAssignmentBatch,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    token_payload: dict = Depends(bm_verify_token)
 ):
     """
     批量提交评价任务
@@ -89,7 +91,7 @@ async def create_batch_evaluation_assignments(
 
 # 创建问卷
 @router.post("/", response_model=SurveyOut)
-async def create_survey(survey_data: SurveyCreate, db: AsyncSession = Depends(get_db)):
+async def create_survey(survey_data: SurveyCreate, db: AsyncSession = Depends(get_db), token_payload: dict = Depends(bm_verify_token)):
     try:
         survey = SurveyTable(
             title=survey_data.title,
@@ -138,7 +140,7 @@ async def create_survey(survey_data: SurveyCreate, db: AsyncSession = Depends(ge
 
 # 创建新的汇总问卷
 @router.post("/survey_summary/", response_model=SummaryDetailOut)
-async def create_summary(data: SummaryCreateIn,db: AsyncSession = Depends(get_db)):
+async def create_summary(data: SummaryCreateIn,db: AsyncSession = Depends(get_db), token_payload: dict = Depends(bm_verify_token)):
     # 插入主表
     new_summary = SurveySummaryTable(
         name=data.name,
