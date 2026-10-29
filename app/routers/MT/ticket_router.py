@@ -1,6 +1,8 @@
+import asyncio
 from fastapi.responses import FileResponse
 from fastapi import BackgroundTasks
 from fastapi import APIRouter, HTTPException, Depends, status, UploadFile, File, Form, Query
+from app.utils.enveloping_route import EnvelopingRoute
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -18,7 +20,7 @@ import json
 
 from app.utils.ali.BaiLianRAG import BaiLian
 
-router = APIRouter()
+router = APIRouter(route_class=EnvelopingRoute)
 logger = get_logger('ticket_router')
 
 # 查询所有编号设备
@@ -194,7 +196,7 @@ async def create_ticket(
             fault_phenomenon=fault_phenomenon,
             fault_reason=fault_reason,
             handling_method=handling_method,
-            handler=handler or current_user.username,
+            handler=handler or current_user.name,
             status=0  # 默认为“待处理”
         )
         db.add(ticket)
@@ -719,7 +721,7 @@ async def update_ticket(
         ticket.fault_phenomenon = fault_phenomenon
         ticket.fault_reason = fault_reason
         ticket.handling_method = handling_method
-        ticket.handler = handler or current_user.username
+        ticket.handler = handler or current_user.name
         ticket.user_id = current_user.id
 
         # 删除附件
@@ -759,8 +761,8 @@ async def update_ticket(
         if ticket.file_id:
             try:
                 bai_lian = BaiLian()
-                bai_lian.delete_rag_document(ticket.file_id)  # 删除文档
-                bai_lian.delete_rag_index(ticket.file_id)  # 删除知识库索引文档
+                await asyncio.to_thread(bai_lian.delete_rag_document, ticket.file_id)  # 删除文档
+                await asyncio.to_thread(bai_lian.delete_rag_index, ticket.file_id)  # 删除知识库索引文档
             except Exception as e:
                 logger.error(f"移动端修改工单信息，删除大模型文档报错：{e}")
 
@@ -797,7 +799,7 @@ async def update_ticket(
 
 
 @router.get("/attachment/{attachment_id}/preview")
-async def preview_attachment(attachment_id: int, db: AsyncSession = Depends(get_db)):
+async def preview_attachment(attachment_id: int, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
     result = await db.execute(
         select(Attachment).where(Attachment.id == attachment_id)
     )
@@ -812,7 +814,7 @@ async def preview_attachment(attachment_id: int, db: AsyncSession = Depends(get_
         raise HTTPException(status_code=404, detail="文件不存在")
 
     return FileResponse(
-        path=attachment.file_path,
+        path=file_path,
         filename=attachment.file_name,
         media_type=attachment.file_type or "application/octet-stream",
         headers={"Content-Disposition": f"inline; filename={attachment.file_name}"}

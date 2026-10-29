@@ -6,24 +6,40 @@ from .logger import get_logger
 
 logger = get_logger('request')
 
+# 需要脱敏的字段（不区分大小写）；命中后统一替换为 ******，避免密码/令牌落盘
+_SENSITIVE_KEYS = {
+    "password", "token", "authorization", "secret", "api_key",
+    "access_token", "refresh_token", "passwd", "pwd",
+}
 
-# 日志记录中间件，每次请求前记录该请求的相关信息
+
+def _redact(obj):
+    """递归遮盖敏感字段，保持结构不变便于日志阅读"""
+    if isinstance(obj, dict):
+        return {
+            k: ("******" if k.lower() in _SENSITIVE_KEYS else _redact(v))
+            for k, v in obj.items()
+        }
+    if isinstance(obj, list):
+        return [_redact(v) for v in obj]
+    return obj
+
+
+# 日志记录中间件，每次请求前后记录相关信息
 class RequestLoggerMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         # 记录请求开始时间
         start_time = time.time()
-        # 获取请求信息
+
+        # 不记录 headers（可能含 Authorization token / cookie 等凭据），避免凭据泄露
         request_info = {
             "method": request.method,
-            "url": str(request.url),
             "path": request.url.path,
             "query_params": dict(request.query_params),
-            "headers": dict(request.headers),
             "client_host": request.client.host if request.client else None,
-            "client_port": request.client.port if request.client else None
         }
-        
-        # 尝试获取请求体
+
+        # 尝试获取请求体（脱敏后记录）
         try:
             body = await request.body()
             if body:
@@ -33,35 +49,42 @@ class RequestLoggerMiddleware(BaseHTTPMiddleware):
                     request_info["body"] = "文件上传请求，跳过请求体记录"
                 else:
                     try:
-                        request_info["body"] = body.decode()
+                        decoded = body.decode()
                     except UnicodeDecodeError:
                         request_info["body"] = "二进制数据，跳过请求体记录"
+                    else:
+                        try:
+                            # 解析为 JSON 后递归脱敏敏感字段
+                            parsed = json.loads(decoded)
+                            request_info["body"] = _redact(parsed)
+                        except (json.JSONDecodeError, ValueError):
+                            # 非 JSON 明文（可能含密码等），只记录长度，不记录原文
+                            request_info["body"] = f"<非JSON内容，长度 {len(decoded)}>"
         except Exception as e:
             request_info["body"] = f"无法读取请求体: {str(e)}"
-        
+
         # 记录请求信息
         logger.info(f"收到请求: {json.dumps(request_info, ensure_ascii=False, indent=2)}")
-        
+
         try:
             # 处理请求（等请求处理完后，再接着走下面的代码逻辑）
             response = await call_next(request)
-            
+
             # 计算处理时间
             process_time = time.time() - start_time
-            
-            # 获取响应信息
+
+            # 获取响应信息（不记录响应 headers，避免泄露 Set-Cookie 等）
             response_info = {
                 "status_code": response.status_code,
-                "headers": dict(response.headers),
                 "process_time": f"{process_time:.3f}s"
             }
-            
+
             # 记录响应信息
             logger.info(f"请求响应: {json.dumps(response_info, ensure_ascii=False, indent=2)}")
-            
+
             return response
-            
+
         except Exception as e:
             # 记录异常信息
             logger.error(f"请求处理异常: {str(e)}", exc_info=True)
-            raise 
+            raise

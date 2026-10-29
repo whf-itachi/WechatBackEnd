@@ -4,6 +4,7 @@ import openpyxl
 from openpyxl.styles import Font
 from openpyxl.utils import get_column_letter
 from fastapi import APIRouter, Depends, HTTPException, status, Request, Query
+from app.utils.enveloping_route import EnvelopingRoute
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select, func, delete
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -20,7 +21,7 @@ from app.models.survey import SurveyTable, SurveyQuestion, SurveyOption, SurveyR
 from app.schemas.survey_schema import *
 
 
-router = APIRouter()
+router = APIRouter(route_class=EnvelopingRoute)
 logger = get_logger('Survey_router')
 
 
@@ -30,7 +31,8 @@ async def survey_responses_list(
     survey_id: int = Query(..., description="问卷 ID"),
     skip: int = Query(0, ge=0),
     limit: int = Query(10, ge=1),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    token_payload: dict = Depends(bm_verify_token)
 ):
     # 1. 校验问卷是否存在
     survey_stmt = select(SurveyTable.id).where(SurveyTable.id == survey_id)
@@ -298,7 +300,7 @@ async def get_survey(survey_id: int, db: AsyncSession = Depends(get_db)):
 
 # ———————————————— 更新问卷信息 ————————————————  这个接口没有使用
 @router.put("/{survey_id}", response_model=SurveyOut)
-async def update_survey(survey_id: int, survey_data: SurveyUpdate, db: AsyncSession = Depends(get_db)):
+async def update_survey(survey_id: int, survey_data: SurveyUpdate, db: AsyncSession = Depends(get_db), token_payload: dict = Depends(bm_verify_token)):
     try:
         result = await db.execute(select(SurveyTable).where(SurveyTable.id == survey_id))
         survey = result.scalar_one_or_none()
@@ -358,7 +360,7 @@ async def generate_qr(request: Request, survey_id: int, token_payload: dict = De
 
 
 @router.get("/summary/detail/{summary_id}/qr")
-async def generate_qr(request: Request, summary_id: int):
+async def generate_qr(request: Request, summary_id: int, token_payload: dict = Depends(bm_verify_token)):
     """
     汇总问卷二维码
     """
@@ -737,7 +739,7 @@ async def export_survey_data_excel(survey_id: int, db: AsyncSession = Depends(ge
 
 # 查询所有汇总问卷列表
 @router.get("/survey_summary/", response_model=Dict[str, Union[int, List[SummaryOut]]])
-async def survey_summary_list(skip: int = 0,limit: int = 10,db: AsyncSession = Depends(get_db)):
+async def survey_summary_list(skip: int = 0,limit: int = 10,db: AsyncSession = Depends(get_db), token_payload: dict = Depends(bm_verify_token)):
     # 查询总数
     count_stmt = select(func.count()).select_from(SurveySummaryTable)
     total_result = await db.execute(count_stmt)
@@ -774,7 +776,7 @@ async def survey_summary_list(skip: int = 0,limit: int = 10,db: AsyncSession = D
 
 # 根据指定id修改汇总问卷
 @router.put("/survey_summary/{id}", response_model=SummaryDetailOut)
-async def update_summary(id: int,data: SummaryUpdateIn,db: AsyncSession = Depends(get_db)):
+async def update_summary(id: int,data: SummaryUpdateIn,db: AsyncSession = Depends(get_db), token_payload: dict = Depends(bm_verify_token)):
     # 查询现有记录
     result = await db.execute(
         select(SurveySummaryTable).where(SurveySummaryTable.id == id)
@@ -827,7 +829,7 @@ async def update_summary(id: int,data: SummaryUpdateIn,db: AsyncSession = Depend
 
 # 查询指定id汇总问卷信息
 @router.get("/survey_summary/{id}", response_model=SummaryDetailOut)
-async def get_summary_by_id(id: int,db: AsyncSession = Depends(get_db)):
+async def get_summary_by_id(id: int,db: AsyncSession = Depends(get_db), token_payload: dict = Depends(bm_verify_token)):
     result = await db.execute(
         select(SurveySummaryTable).where(SurveySummaryTable.id == id)
     )
@@ -884,7 +886,7 @@ async def submit_factory_notice(notice_data: FactoryNoticeCreate,db: AsyncSessio
 
 # 获取多人评价结果
 @router.get("/response/{response_id}/evaluations", response_model=List[EvaluationAssignmentOut])
-async def get_response_evaluations(response_id: int,db: AsyncSession = Depends(get_db)):
+async def get_response_evaluations(response_id: int,db: AsyncSession = Depends(get_db), token_payload: dict = Depends(bm_verify_token)):
     """获取指定问卷回答记录的所有评价任务信息，包含评价者姓名"""
     # 查询指定的回答记录及其关联的答案和评价任务
     result = await db.execute(
@@ -931,7 +933,8 @@ async def get_response_evaluations(response_id: int,db: AsyncSession = Depends(g
 @router.get("/answers/{response_id}/evaluations", response_model=list[EvaluationAssignmentOut])
 async def get_answer_evaluations(
         response_id: int,
-        db: AsyncSession = Depends(get_db)
+        db: AsyncSession = Depends(get_db),
+        token_payload: dict = Depends(bm_verify_token)
 ):
     """
     根据问卷回答记录ID（response_id），查询该回答下所有问题的评价任务记录

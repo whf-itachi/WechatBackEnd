@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Response, HTTPException, BackgroundTasks
+from app.utils.enveloping_route import EnvelopingRoute
 import os
 from pathlib import Path
 from datetime import datetime, timedelta
@@ -11,7 +12,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 from app.logger import get_logger
 
-router = APIRouter()
+router = APIRouter(route_class=EnvelopingRoute)
 logger = get_logger('company_router')
 
 PDF_DIR = "/var/www/company/pdf"

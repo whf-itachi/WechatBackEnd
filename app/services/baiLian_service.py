@@ -1,4 +1,5 @@
 # bai_lian_service.py
+import asyncio
 import io
 
 from h11 import ERROR
@@ -24,7 +25,7 @@ class BaiLianTaskRunner:
     async def run(self, table_id: int, f_type="ticket"):
         try:
             await self.bai_lian.describe_file()
-            self.bai_lian.submit_index_add_documents_job()
+            await asyncio.to_thread(self.bai_lian.submit_index_add_documents_job)
 
             await self._update_table_status(table_id, f_type)
         except Exception as e:
@@ -64,8 +65,8 @@ async def process_full_rag_upload(file_bytes: bytes, dict_data: dict):
 
         file_obj = io.BytesIO(file_bytes)
 
-        # 上传文档
-        bai_lian.upload_rag_document(file_name, r_data=file_obj, f_type=f_type)
+        # 上传文档（同步 SDK 调用，offload 到线程池避免阻塞事件循环）
+        await asyncio.to_thread(bai_lian.upload_rag_document, file_name, r_data=file_obj, f_type=f_type)
 
         # 关键：后台任务里新建一个 session
         async with async_session_factory() as session:
@@ -98,7 +99,7 @@ async def async_delete_rag_document(db: AsyncSession, file_id: str, f_type="tick
         await db.commit()
 
         bai_lian = BaiLian()
-        bai_lian.delete_rag_document(file_id)  # 删除文档
-        bai_lian.delete_rag_index(file_id)  # 删除知识库索引文档
+        await asyncio.to_thread(bai_lian.delete_rag_document, file_id)  # 删除文档
+        await asyncio.to_thread(bai_lian.delete_rag_index, file_id)  # 删除知识库索引文档
     except Exception as e:
         logger.error(f"删除大模型文档报错：{e}")

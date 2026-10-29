@@ -2,10 +2,11 @@
 
 # 导入APIRouter
 from fastapi import APIRouter
+from app.utils.enveloping_route import EnvelopingRoute
 
 
 # 实例化APIRouter实例
-router = APIRouter(prefix="/llm", tags=["业务接口"])
+router = APIRouter(prefix="/llm", tags=["业务接口"], route_class=EnvelopingRoute)
 
 
 # 注册具体方法
@@ -15,6 +16,5 @@ async def index():
     默认访问链接
     """
     return {
-        "code": 200,
-        "msg": "Hello llm!"
+        "message": "llm service ready"
     }

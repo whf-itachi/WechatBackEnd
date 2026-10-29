@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException
+from app.utils.enveloping_route import EnvelopingRoute
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.db_services.database import get_db
 from app.services.user_service import (
@@ -9,25 +10,25 @@ from app.services.user_service import (
     delete_user_service,
     verify_user_login
 )
-from app.schemas.user_schema import UserCreate, UserResponse, UserUpdate, UserLogin
+from app.schemas.user_schema import UserCreate, UserResponse, UserUpdate, UserLogin, UserPublic
 from app.dependencies.auth import get_current_user
 from app.models.user import User
 from typing import List
 from app.logger import get_logger
 
-router = APIRouter()
+router = APIRouter(route_class=EnvelopingRoute)
 logger = get_logger('user_router')
 
 # 注册用户
 @router.post("/register", response_model=UserResponse)
 async def register_user(user_data: UserCreate, db: AsyncSession = Depends(get_db)):
     """用户注册"""
-    logger.info(f"收到用户注册请求: {user_data.model_dump()}")
+    logger.info(f"收到用户注册请求: {user_data.model_dump(exclude={'password'})}")
     try:
         user, token = await create_user_service(db, user_data)
-        logger.info(f"用户注册成功: {user.model_dump()}")
+        logger.info(f"用户注册成功: {UserPublic.model_validate(user).model_dump()}")
         return {
-            "user": user.model_dump(),
+            "user": UserPublic.model_validate(user),
             "token": token
         }
     except HTTPException as e:
@@ -47,12 +48,12 @@ async def register_user(user_data: UserCreate, db: AsyncSession = Depends(get_db
 @router.post("/login", response_model=UserResponse)
 async def login_user(login_data: UserLogin, db: AsyncSession = Depends(get_db)):
     """用户登录"""
-    logger.info(f"收到用户登录请求: {login_data.model_dump()}")
+    logger.info(f"收到用户登录请求: {login_data.model_dump(exclude={'password'})}")
     try:
         user, token = await verify_user_login(db, login_data)
-        logger.info(f"用户登录成功: {user.model_dump()}")
+        logger.info(f"用户登录成功: {UserPublic.model_validate(user).model_dump()}")
         return {
-            "user": user.model_dump(),
+            "user": UserPublic.model_validate(user),
             "token": token
         }
     except HTTPException as e:
@@ -79,7 +80,7 @@ async def get_users(
     try:
         users = await get_users_service(db)
         logger.info(f"成功获取用户列表，共 {len(users)} 条记录")
-        return [{"user": user.model_dump()} for user in users]
+        return [{"user": UserPublic.model_validate(user)} for user in users]
     except HTTPException as e:
         logger.error(f"获取用户列表失败 - HTTP异常: {str(e)}")
         raise e
@@ -104,8 +105,8 @@ async def get_user(
     logger.info(f"收到获取用户信息请求，用户ID: {user_id}，当前用户: {current_user.id}")
     try:
         user = await get_user_service(db, user_id)
-        logger.info(f"成功获取用户信息: {user.model_dump()}")
-        return {"user": user.model_dump()}
+        logger.info(f"成功获取用户信息: {UserPublic.model_validate(user).model_dump()}")
+        return {"user": UserPublic.model_validate(user)}
     except HTTPException as e:
         logger.error(f"获取用户信息失败 - HTTP异常: {str(e)}")
         raise e
@@ -131,8 +132,8 @@ async def update_user(
     logger.info(f"收到更新用户信息请求，用户ID: {user_id}，当前用户: {current_user.id}")
     try:
         user = await update_user_service(db, user_id, user_data)
-        logger.info(f"成功更新用户信息: {user.model_dump()}")
-        return {"user": user.model_dump()}
+        logger.info(f"成功更新用户信息: {UserPublic.model_validate(user).model_dump()}")
+        return {"user": UserPublic.model_validate(user)}
     except HTTPException as e:
         logger.error(f"更新用户信息失败 - HTTP异常: {str(e)}")
         raise e

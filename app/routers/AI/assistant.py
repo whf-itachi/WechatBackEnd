@@ -3,6 +3,7 @@ import mimetypes
 import os
 
 from fastapi import APIRouter, Depends, Request, HTTPException, Query
+from app.utils.enveloping_route import EnvelopingRoute
 from fastapi.responses import StreamingResponse, FileResponse, JSONResponse
 
 from pydantic import BaseModel
@@ -19,7 +20,7 @@ from app.utils.ali.BaiLianRAG import BaiLian
 
 from app.utils.rate_limit import rate_limit
 
-router = APIRouter()
+router = APIRouter(route_class=EnvelopingRoute)
 logger = get_logger('chat_router')
 
 
@@ -92,9 +93,8 @@ async def get_attachments_by_issue(request_data: FileIdsRequest, db: AsyncSessio
 
         attachments.append(file_info)
 
-    # return JSONResponse(content={"attachments": attachments}, media_type="application/json")
-    return JSONResponse(content={"code": 200, "data": {"attachments": attachments}, "message": "操作成功"})
-    # return {"attachments": attachments}
+    # 成功响应交由 EnvelopingRoute 统一包成 {code, message, data}
+    return {"attachments": attachments}
 
 
 # 通过附件id查询附件预览 （暂时废弃了，使用静态文件直接访问）
@@ -128,10 +128,5 @@ async def create_question(data: QuestionCreate, db: AsyncSession = Depends(get_d
     await db.commit()
     await db.refresh(question)
 
-    # 构建统一格式响应
-    response_data = {
-        "code": 200,
-        "data": '',
-        "message": "操作成功"
-    }
-    return JSONResponse(content=response_data)
+    # 成功响应交由 EnvelopingRoute 统一包成 {code, message, data}
+    return {"message": "操作成功"}

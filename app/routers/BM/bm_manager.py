@@ -9,38 +9,17 @@ from pydantic import BaseModel
 from app.db_services.database import get_db
 from app.logger import get_logger
 from app.models.ticket import *
+from app.dependencies.BM_auth import bm_verify_token
+from app.utils.enveloping_route import EnvelopingRoute
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(bm_verify_token)], route_class=EnvelopingRoute)
 logger = get_logger('ticket_router')
-
-
-# ------------------------- 响应模型 -------------------------
-class BaseResponse(BaseModel):
-    code: int = 200
-    message: str = "success"
-    data: Optional[dict] = None
-
-
-class ErrorResponse(BaseModel):
-    code: int
-    message: str
-    detail: Optional[str] = None
 
 
 # ------------------------- 分页模型 -------------------------
 class PageParams(BaseModel):
     page: int = 1
     size: int = 10
-
-
-class PageResponse(BaseResponse):
-    data: dict = {
-        "items": [],
-        "total": 0,
-        "pages": 0,
-        "has_next": False,
-        "has_prev": False
-    }
 
 
 # ------------------------- 设备型号接口 -------------------------
@@ -66,10 +45,10 @@ async def create_device_model(
         raise e
     except Exception as e:
         logger.error(f"创建设备失败: {str(e)}")
-        return ErrorResponse(code=500, message="服务器内部错误", detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/device_models", response_model=BaseResponse, summary="获取设备型号列表")
+@router.get("/device_models", summary="获取设备型号列表")
 async def list_device_models(
     page: int = 1,
     size: int = 10,
@@ -87,7 +66,7 @@ async def list_device_models(
         return {"data": {"items": items, "total": total_count}}
     except Exception as e:
         logger.error(f"查询设备型号失败: {str(e)}")
-        return ErrorResponse(code=500, message="服务器内部错误", detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.put("/device_models/{model_id}", summary="更新设备型号")
@@ -113,7 +92,7 @@ async def update_device_model(
         raise e
     except Exception as e:
         logger.error(f"更新设备型号失败: {str(e)}")
-        return ErrorResponse(code=500, message="服务器内部错误", detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 
@@ -134,7 +113,7 @@ async def delete_device_model(model_id: int, db: AsyncSession = Depends(get_db))
         raise e
     except Exception as e:
         logger.error(f"删除设备型号失败: {str(e)}")
-        return ErrorResponse(code=500, message="服务器内部错误", detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
 
 # ------------------------- 设备管理接口 -------------------------
 @router.post("/device", summary="创建设备")
@@ -174,7 +153,7 @@ async def create_device(
 
     except Exception as e:
         logger.error(f"创建设备失败: {str(e)}")
-        return ErrorResponse(code=500, message="服务器内部错误", detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/device/list", summary="获取设备列表（分页）")
@@ -217,7 +196,7 @@ async def get_device_list(
         return {"data": {"items": devices, "total": total}}
     except Exception as e:
         logger.error(f"查询设备列表失败: {str(e)}")
-        return ErrorResponse(code=500, message="服务器内部错误", detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/device/{device_id}", summary="获取设备详情")
@@ -244,7 +223,7 @@ async def get_device(
         raise e
     except Exception as e:
         logger.error(f"查询设备详情失败: {str(e)}")
-        return ErrorResponse(code=500, message="服务器内部错误", detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.put("/device/{device_id}", summary="更新设备")
@@ -294,7 +273,7 @@ async def update_device(
         raise e
     except Exception as e:
         logger.error(f"更新设备失败: {str(e)}")
-        return ErrorResponse(code=500, message="服务器内部错误", detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.delete("/device/{device_id}", summary="删除设备")
@@ -314,7 +293,7 @@ async def delete_device(
         return {"data": f"编号为 {device_id} 的设备已删除"}
     except Exception as e:
         logger.error(f"删除设备失败: {str(e)}")
-        return ErrorResponse(code=500, message="服务器内部错误", detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # ------------------------- 客户管理接口 -------------------------
@@ -341,7 +320,7 @@ async def create_customer(
         raise e
     except Exception as e:
         logger.error(f"新增客户失败: {str(e)}")
-        return ErrorResponse(code=500, message="服务器内部错误", detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/customers", summary="分页获取客户列表")
@@ -362,7 +341,7 @@ async def list_customers(
         return {"data": {"items": items, "total": total_count}}
     except Exception as e:
         logger.error(f"查询客户信息失败: {str(e)}")
-        return ErrorResponse(code=500, message="服务器内部错误", detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.put("/customers/{customer_id}", summary="更新客户信息")
@@ -388,10 +367,10 @@ async def update_customer(
         raise e
     except Exception as e:
         logger.error(f"更新设备型号失败: {str(e)}")
-        return ErrorResponse(code=500, message="服务器内部错误", detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.delete("/customers/{customer_id}", response_model=BaseResponse, summary="删除客户")
+@router.delete("/customers/{customer_id}", summary="删除客户")
 async def delete_customer(
         customer_id: int,
         db: AsyncSession = Depends(get_db)
@@ -409,7 +388,7 @@ async def delete_customer(
         await db.commit()
 
         logger.info(f"客户标记删除 | ID:{customer_id}")
-        return BaseResponse(message="删除操作已完成")
+        return {"message": "删除操作已完成"}
 
     except HTTPException as e:
         raise e
@@ -419,11 +398,7 @@ async def delete_customer(
             f"删除操作失败 | ID:{customer_id} | 错误:{str(e)}",
             exc_info=True
         )
-        return ErrorResponse(
-            code=500,
-            message="服务器内部错误",
-            detail="系统繁忙，请稍后重试"
-        )
+        raise HTTPException(status_code=500, detail="系统繁忙，请稍后重试")
 
 
 # ------------------------- 工厂管理接口 -------------------------
@@ -466,10 +441,10 @@ async def create_factory(
         raise e
     except Exception as e:
         logger.error(f"创建工厂失败: {str(e)}")
-        return ErrorResponse(code=500, message="服务器内部错误", detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/factory/list", response_model=BaseResponse, summary="获取工厂列表（分页）")
+@router.get("/factory/list", summary="获取工厂列表（分页）")
 async def list_factories(
     page: int = Query(1, ge=1, description="页码"),
     size: int = Query(10, ge=1, le=100, description="每页数量"),
@@ -509,7 +484,7 @@ async def list_factories(
 
     except Exception as e:
         logger.error(f"查询工厂列表失败: {str(e)}")
-        return ErrorResponse(code=500, message="服务器内部错误", detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.put("/factory/{factory_id}", summary="更新工厂信息")
@@ -564,7 +539,7 @@ async def update_factory(
         raise e
     except Exception as e:
         logger.error(f"更新工厂失败: {str(e)}")
-        return ErrorResponse(code=500, message="服务器内部错误", detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.delete("/factory/{factory_id}", summary="删除工厂")
@@ -592,4 +567,4 @@ async def delete_factory(
         raise e
     except Exception as e:
         logger.error(f"删除工厂失败: {str(e)}")
-        return ErrorResponse(code=500, message="服务器内部错误", detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e))

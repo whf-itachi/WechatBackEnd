@@ -1,5 +1,6 @@
 import traceback
 from fastapi import APIRouter, Depends, HTTPException, status
+from app.utils.enveloping_route import EnvelopingRoute
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -12,7 +13,7 @@ from app.models import User
 from app.models.survey import *
 from app.schemas.survey_schema import *
 
-router = APIRouter()
+router = APIRouter(route_class=EnvelopingRoute)
 logger = get_logger('Survey_post_router')
 
 

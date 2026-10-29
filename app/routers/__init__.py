@@ -5,7 +5,9 @@ from app.routers.BM import router as bm_router
 from app.routers.AI import router as ai_router
 
 # 创建父路由实例，配置公共属性
-router = APIRouter()
+from app.utils.enveloping_route import EnvelopingRoute
+
+router = APIRouter(route_class=EnvelopingRoute)
 
 # 注册子路由
 router.include_router(mt_router, tags=["ics移动端接口"])

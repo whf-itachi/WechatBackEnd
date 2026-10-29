@@ -1,6 +1,7 @@
 from io import BytesIO
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, BackgroundTasks, Form
+from app.utils.enveloping_route import EnvelopingRoute
 from sqlmodel import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from datetime import datetime, timezone
@@ -12,7 +13,7 @@ from app.models.rag import Question, Documents
 from app.schemas.rag_schema import QuestionCreate, QuestionRead, QuestionUpdate
 from app.services.baiLian_service import process_full_rag_upload, async_delete_rag_document
 
-router = APIRouter()
+router = APIRouter(route_class=EnvelopingRoute)
 logger = get_logger('rag_router')
 
 

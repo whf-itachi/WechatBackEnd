@@ -1,3 +1,4 @@
+import asyncio
 import os
 from datetime import datetime
 from io import BytesIO
@@ -217,11 +218,11 @@ async def delete_ticket_service(session: AsyncSession, ticket_id: int):
         await session.delete(ticket)
         await session.commit()
 
-        # 7. 删除大模型工单文档
+        # 7. 删除大模型工单文档（同步 SDK 调用，offload 到线程池避免阻塞事件循环）
         if ticket.file_id:
             bai_lian = BaiLian()
-            bai_lian.delete_rag_document(ticket.file_id)  # 删除文档
-            bai_lian.delete_rag_index(ticket.file_id)  # 删除知识库索引文档
+            await asyncio.to_thread(bai_lian.delete_rag_document, ticket.file_id)  # 删除文档
+            await asyncio.to_thread(bai_lian.delete_rag_index, ticket.file_id)  # 删除知识库索引文档
 
         return True
 

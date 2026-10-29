@@ -1,10 +1,12 @@
 from fastapi import APIRouter, HTTPException, Depends, status, UploadFile, File, Form, Body, BackgroundTasks
+from app.utils.enveloping_route import EnvelopingRoute
 from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import selectinload
 from datetime import datetime
 import tempfile
 import os
+import asyncio
 
 from app.db_services.database import get_db
 from app.dependencies.BM_auth import bm_verify_token
@@ -22,7 +24,7 @@ from app.services.ticket_service import delete_attachment_by_id, delete_ticket_s
 from app.services.user_service import get_user_by_id
 from app.utils.ali.BaiLianRAG import BaiLian
 
-router = APIRouter()
+router = APIRouter(route_class=EnvelopingRoute)
 logger = get_logger('ticket_router')
 
 
@@ -313,7 +315,7 @@ async def update_ticket(
     ticket.fault_phenomenon = fault_phenomenon
     ticket.fault_reason = fault_reason
     ticket.handling_method = handling_method
-    ticket.handler = handler or current_user.username
+    ticket.handler = handler or current_user.name
     ticket.user_id = current_user.id
 
     # 删除附件
@@ -362,8 +364,8 @@ async def update_ticket(
     try:
         if ticket.file_id:
             bai_lian = BaiLian()
-            bai_lian.delete_rag_document(ticket.file_id)
-            bai_lian.delete_rag_index(ticket.file_id)
+            await asyncio.to_thread(bai_lian.delete_rag_document, ticket.file_id)
+            await asyncio.to_thread(bai_lian.delete_rag_index, ticket.file_id)
 
         # 重新生成知识库文档
         row_data = ticket.model_dump()
@@ -422,18 +424,8 @@ async def delete_ticket(
 
 
 
-@router.get("/files/preview")
-def preview_file(file_path: str):
-    # 安全检查（防止任意路径访问）
-    target_path = os.path.abspath(file_path)
-    if not os.path.isfile(target_path):
-        raise HTTPException(status_code=404, detail="非法访问路径")
-
-    return FileResponse(target_path)
-
-
 @router.get("/attachment/{attachment_id}/preview")
-async def preview_attachment(attachment_id: int, db: AsyncSession = Depends(get_db)):
+async def preview_attachment(attachment_id: int, db: AsyncSession = Depends(get_db), token_payload: dict = Depends(bm_verify_token)):
     result = await db.execute(select(Attachment).where(Attachment.id == attachment_id))
     attachment = result.scalars().first()
 

@@ -1,10 +1,11 @@
 import hashlib
 from fastapi import Request
 from fastapi import APIRouter
+from app.utils.enveloping_route import EnvelopingRoute
 
 from app.logger import get_logger
 
-router = APIRouter()
+router = APIRouter(route_class=EnvelopingRoute)
 logger = get_logger('wx_auth_router')
 TOKEN = "haitch_wx_auth_202504"
 

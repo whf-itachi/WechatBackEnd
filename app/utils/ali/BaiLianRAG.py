@@ -168,7 +168,10 @@ class BaiLian:
                 count += 1
                 print("查询文档解析状态...")
                 await asyncio.sleep(3)
-                res = self.client.describe_file_with_options(self.work_space, self.FileId, headers, runtime)
+                res = await asyncio.to_thread(
+                    self.client.describe_file_with_options,
+                    self.work_space, self.FileId, headers, runtime
+                )
                 if res.body.data.status == "PARSE_SUCCESS":
                     print("文档解析已经完成，可以进行问答使用")
                     break
@@ -271,8 +274,8 @@ class BaiLian:
     @staticmethod
     def chat(issue_str):
         response = Application.call(
-            api_key="sk-ca9011fbf3b44699b0283e570d2249dc",
-            app_id='dd81e603c7aa45c6a9c9c5df04e82a33',  # 替换为实际的应用 ID
+            api_key=settings.DASHSCOPE_API_KEY,
+            app_id=settings.DASHSCOPE_APP_ID,
             prompt=issue_str)
         if response.status_code != HTTPStatus.OK:
             print(f'request_id={response.request_id}')
@@ -287,8 +290,8 @@ class BaiLian:
         doc_set = set()
 
         responses = Application.call(
-            api_key="sk-51365fd44e35446089269deba6061870",
-            app_id='dd81e603c7aa45c6a9c9c5df04e82a33',  # 替换为实际的应用 ID
+            api_key=settings.DASHSCOPE_API_KEY_STREAM,
+            app_id=settings.DASHSCOPE_APP_ID,
             prompt=issue_str,
             stream=True,  # 流式输出
             incremental_output=True)  # 增量输出

@@ -48,9 +48,20 @@ class UserLogin(SQLModel):
             }
         }
 
+# 对外安全用户模型（不含 password）
+class UserPublic(SQLModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: Optional[int] = None
+    name: str
+    phone: str
+    email: EmailStr
+    is_active: bool = True
+    user_type: Optional[str] = None
+
+
 # 用户响应模型
 class UserResponse(SQLModel):
-    user: dict
+    user: UserPublic
     token: Optional[str] = Field(None, description="访问令牌")
 
     model_config = ConfigDict(from_attributes=True)

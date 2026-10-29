@@ -1,4 +1,5 @@
 from fastapi import Depends, HTTPException, status, APIRouter
+from app.utils.enveloping_route import EnvelopingRoute
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 from starlette.responses import JSONResponse
@@ -7,10 +8,10 @@ from app.db_services.database import get_db
 from app.dependencies.BM_auth import bm_verify_token
 from app.logger import get_logger
 from app.models import User
-from app.schemas.user_schema import UserResponse, UserCreate, UserTypeUpdate, UserLogin
+from app.schemas.user_schema import UserResponse, UserPublic, UserCreate, UserTypeUpdate, UserLogin
 from app.services.user_service import create_user_service, verify_user_login
 
-router = APIRouter()
+router = APIRouter(route_class=EnvelopingRoute)
 logger = get_logger('user_router')
 
 
@@ -40,12 +41,12 @@ async def logout():
 @router.post("/register", response_model=UserResponse)
 async def register_user(user_data: UserCreate, db: AsyncSession = Depends(get_db)):
     """用户注册"""
-    logger.info(f"收到用户注册请求: {user_data.model_dump()}")
+    logger.info(f"收到用户注册请求: {user_data.model_dump(exclude={'password'})}")
     try:
         user, token = await create_user_service(db, user_data)
-        logger.info(f"用户注册成功: {user.model_dump()}")
+        logger.info(f"用户注册成功: {UserPublic.model_validate(user).model_dump()}")
         return {
-            "user": user.model_dump(),
+            "user": UserPublic.model_validate(user),
             "token": token
         }
     except HTTPException as e:
@@ -64,7 +65,7 @@ async def register_user(user_data: UserCreate, db: AsyncSession = Depends(get_db
 
 
 # 查询所有用户接口
-@router.get("/all")
+@router.get("/all", response_model=list[UserPublic])
 async def get_all_users(db: AsyncSession = Depends(get_db), token_payload: dict = Depends(bm_verify_token)):
     """获取所有用户"""
     result = await db.execute(select(User))
@@ -77,9 +78,9 @@ async def create_user_endpoint(user_data: UserCreate, db: AsyncSession = Depends
     """新增用户"""
     try:
         user, token = await create_user_service(db, user_data)
-        logger.info(f"用户创建成功: {user.model_dump()}")
+        logger.info(f"用户创建成功: {UserPublic.model_validate(user).model_dump()}")
         return {
-            "user": user.model_dump(),
+            "user": UserPublic.model_validate(user),
             "token": token
         }
     except HTTPException as e:

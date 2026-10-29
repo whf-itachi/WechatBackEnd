@@ -26,6 +26,11 @@ class Settings(BaseSettings):
     ALI_ACCESS_KEY_ID: str
     ALI_ACCESS_KEY_SECRET: str
 
+    # 阿里百炼应用密钥（DashScope 对话接口，外置于 .env）
+    DASHSCOPE_API_KEY: str
+    DASHSCOPE_API_KEY_STREAM: str
+    DASHSCOPE_APP_ID: str
+
     # 文件地址
     ATTACHMENT_PATH: str
     DOCUMENT_PATH: str
@@ -51,6 +56,10 @@ class Settings(BaseSettings):
     JWT_SECRET_KEY: str
     JWT_ALGORITHM: str = "HS256"
     JWT_ACCESS_TOKEN_EXPIRE_MINUTES: int = 3  # 开发中，暂时设置30分钟过期
+
+    # CORS 允许的跨域来源（逗号分隔）。生产环境务必改为前端真实域名，
+    # 例如 "https://haitch.tech,https://www.haitch.tech"
+    ALLOWED_ORIGINS: str = "http://localhost:3000,http://127.0.0.1:3000,http://localhost:5173,http://127.0.0.1:5173"
     
     class Config:
         env_file = str(BASE_DIR / ".env")
