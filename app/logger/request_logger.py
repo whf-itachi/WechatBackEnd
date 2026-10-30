@@ -6,6 +6,9 @@ from .logger import get_logger
 
 logger = get_logger('request')
 
+# 仅记录不超过该大小的请求体；超过则一律不读，防止大文件上传把正文吞进内存
+MAX_LOG_BODY_BYTES = 64 * 1024
+
 # 需要脱敏的字段（不区分大小写）；命中后统一替换为 ******，避免密码/令牌落盘
 _SENSITIVE_KEYS = {
     "password", "token", "authorization", "secret", "api_key",
@@ -40,14 +43,23 @@ class RequestLoggerMiddleware(BaseHTTPMiddleware):
         }
 
         # 尝试获取请求体（脱敏后记录）
+        # ⚠️ 必须在调用 request.body() 之前判断：一旦读了，整个正文（含上传文件）都会驻留内存，
+        # 直到请求结束才释放；多并发上传会直接把进程内存顶爆（线上 OOM 的主要来源之一）。
         try:
-            body = await request.body()
-            if body:
-                # 检查是否是文件上传请求
-                content_type = request.headers.get("content-type", "")
-                if "multipart/form-data" in content_type:
-                    request_info["body"] = "文件上传请求，跳过请求体记录"
-                else:
+            content_type = request.headers.get("content-type", "")
+            try:
+                content_length = int(request.headers.get("content-length") or 0)
+            except (TypeError, ValueError):
+                content_length = 0
+
+            if "multipart/form-data" in content_type:
+                # 文件上传：只记长度，绝不读正文
+                request_info["body"] = f"<文件上传请求，跳过请求体记录，content-length={content_length}>"
+            elif content_length > MAX_LOG_BODY_BYTES:
+                request_info["body"] = f"<请求体过大（{content_length} 字节），跳过记录>"
+            else:
+                body = await request.body()
+                if body:
                     try:
                         decoded = body.decode()
                     except UnicodeDecodeError:

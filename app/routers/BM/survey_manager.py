@@ -14,6 +14,7 @@ import qrcode
 from io import BytesIO
 from app.db_services.database import get_db
 from app.dependencies.BM_auth import bm_verify_token
+from app.config import settings
 from app.logger import get_logger
 from app.models import User
 from app.models.survey import SurveyTable, SurveyQuestion, SurveyOption, SurveyResponse, SurveyAnswer, \
@@ -341,15 +342,30 @@ async def delete_survey(survey_id: int, db: AsyncSession = Depends(get_db), toke
 
 
 # ———————————————— 生成问卷二维码 ————————————————
+# 注意：二维码接口不做鉴权。前端是用 <img :src="..."> 加载这两个接口的，
+# <img> 请求无法携带 Authorization 头，带鉴权必然 401、二维码渲染不出来；
+# 且二维码内容只是公开填写页 URL，本身不含敏感信息。
+def _public_base_url(request: Request) -> str:
+    """对外链接的基础地址。
+
+    优先用 .env 的 FRONTEND_BASE_URL，避免靠请求头反推域名——一旦 Nginx 没透传
+    Host / X-Forwarded-Proto，反推会得到 127.0.0.1:8000 甚至 localhost，二维码
+    会被印成打不开的地址。留空时才回退到请求头推断（仅本地调试用）。
+    """
+    base = (settings.FRONTEND_BASE_URL or "").strip()
+    if not base:
+        base = str(request.base_url)
+        if "8000" in base:  # 本地 uvicorn 调试时指向 vite 开发服务器
+            base = "http://localhost:5173/"
+    return base if base.endswith("/") else base + "/"
+
+
 @router.get("/{survey_id}/qr")
-async def generate_qr(request: Request, survey_id: int, token_payload: dict = Depends(bm_verify_token)):
+async def generate_qr(request: Request, survey_id: int):
     """
     问卷二维码
     """
-    base_url = str(request.base_url)
-    if "8000" in base_url:
-        base_url = "http://localhost:5173/"
-    url = f"{base_url}survey/fill/{survey_id}"
+    url = f"{_public_base_url(request)}survey/fill/{survey_id}"
     qr = qrcode.QRCode(version=1, box_size=10, border=4)
     qr.add_data(url)
     img = qr.make_image(fill_color="black", back_color="white")
@@ -360,14 +376,11 @@ async def generate_qr(request: Request, survey_id: int, token_payload: dict = De
 
 
 @router.get("/summary/detail/{summary_id}/qr")
-async def generate_qr(request: Request, summary_id: int, token_payload: dict = Depends(bm_verify_token)):
+async def generate_qr(request: Request, summary_id: int):
     """
     汇总问卷二维码
     """
-    base_url = str(request.base_url)
-    if "8000" in base_url:
-        base_url = "http://localhost:5173/"
-    url = f"{base_url}summary/fill/{summary_id}"
+    url = f"{_public_base_url(request)}summary/fill/{summary_id}"
     qr = qrcode.QRCode(version=1, box_size=10, border=4)
     qr.add_data(url)
     img = qr.make_image(fill_color="black", back_color="white")
@@ -828,8 +841,12 @@ async def update_summary(id: int,data: SummaryUpdateIn,db: AsyncSession = Depend
 
 
 # 查询指定id汇总问卷信息
+# 汇总问卷的「读取」接口对扫码填写者开放（与 /{survey_id} 一致：读取问卷结构公开，
+# 列表/新建/修改/统计/导出仍需管理员令牌）。前端 /summary/fill/:id 与后台
+# /summary/detail/:id 复用同一个组件并调用本接口，若加鉴权，扫码者会因 401 被跳转到登录页。
+# 返回内容只有 id/name/description/关联问卷 id，无敏感字段。
 @router.get("/survey_summary/{id}", response_model=SummaryDetailOut)
-async def get_summary_by_id(id: int,db: AsyncSession = Depends(get_db), token_payload: dict = Depends(bm_verify_token)):
+async def get_summary_by_id(id: int,db: AsyncSession = Depends(get_db)):
     result = await db.execute(
         select(SurveySummaryTable).where(SurveySummaryTable.id == id)
     )

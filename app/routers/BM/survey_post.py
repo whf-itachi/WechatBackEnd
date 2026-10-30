@@ -17,11 +17,21 @@ router = APIRouter(route_class=EnvelopingRoute)
 logger = get_logger('Survey_post_router')
 
 
+# 问卷填写页专用的「用户候选列表」（被评价人下拉、邀请评分人）
+# 为什么不复用 GET /BM/user/all：那个接口要管理员令牌，而填写页是扫码公开页面，
+# 没有后台 token；且它的返回体含 phone / email，不能暴露给任何扫码者。
+# 这里只暴露 id 和 name，够下拉选择用。
+@router.get("/survey_users")
+async def list_survey_users(db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(User.id, User.name).order_by(User.id))
+    return [{"id": row.id, "name": row.name} for row in result.all()]
+
+
+# 评价提交：由被邀请人扫「现场服务评价表」二维码后直接调用，属公开采集入口
 @router.post("/evaluation/responses")
 async def create_batch_evaluation_assignments(
     data: CreateEvaluationAssignmentBatch,
-    db: AsyncSession = Depends(get_db),
-    token_payload: dict = Depends(bm_verify_token)
+    db: AsyncSession = Depends(get_db)
 ):
     """
     批量提交评价任务

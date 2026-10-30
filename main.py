@@ -51,7 +51,15 @@ app.add_middleware(
 # ---------------- 全局异常处理器：统一错误响应信封 ----------------
 @app.exception_handler(StarletteHTTPException)
 async def http_exception_handler(request, exc):
-    enveloped = ApiResponse(code=exc.status_code, message=exc.detail, data=None)
+    detail = exc.detail
+    if isinstance(detail, dict):
+        message = str(detail.get("message") or detail.get("error") or "请求失败")
+        if detail.get("errors"):
+            # 细节只落日志，不返回给客户端
+            logger.warning(f"HTTP {exc.status_code} {request.url.path}: {detail}")
+    else:
+        message = str(detail)
+    enveloped = ApiResponse(code=exc.status_code, message=message, data=None)
     return JSONResponse(status_code=exc.status_code, content=enveloped.model_dump())
 
 

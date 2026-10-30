@@ -55,11 +55,14 @@ class Settings(BaseSettings):
     # JWT配置
     JWT_SECRET_KEY: str
     JWT_ALGORITHM: str = "HS256"
-    JWT_ACCESS_TOKEN_EXPIRE_MINUTES: int = 3  # 开发中，暂时设置30分钟过期
+    JWT_ACCESS_TOKEN_EXPIRE_MINUTES: int = 30  # 后台管理令牌有效期（分钟）
 
     # CORS 允许的跨域来源（逗号分隔）。生产环境务必改为前端真实域名，
     # 例如 "https://haitch.tech,https://www.haitch.tech"
     ALLOWED_ORIGINS: str = "http://localhost:3000,http://127.0.0.1:3000,http://localhost:5173,http://127.0.0.1:5173"
+
+    # 对外访问的前端域名，用于生成二维码等对外链接
+    FRONTEND_BASE_URL: str = ""
     
     class Config:
         env_file = str(BASE_DIR / ".env")
