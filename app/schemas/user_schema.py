@@ -35,6 +35,11 @@ class UserUpdate(SQLModel):
 class UserTypeUpdate(SQLModel):
     user_type: Optional[str] = Field(None, description="用户类型")
 
+
+# 管理员重置用户密码
+class UserPasswordReset(SQLModel):
+    new_password: str = Field(..., description="新密码（明文，后端加密后入库）")
+
 # 用户登录模型
 class UserLogin(SQLModel):
     name: str = Field(..., description="用户名")

@@ -4,12 +4,21 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 from starlette.responses import JSONResponse
 
+from datetime import datetime, timezone
+
 from app.db_services.database import get_db
 from app.dependencies.BM_auth import bm_verify_token
 from app.logger import get_logger
 from app.models import User
-from app.schemas.user_schema import UserResponse, UserPublic, UserCreate, UserTypeUpdate, UserLogin
-from app.services.user_service import create_user_service, verify_user_login
+from app.schemas.user_schema import (
+    UserResponse,
+    UserPublic,
+    UserCreate,
+    UserTypeUpdate,
+    UserLogin,
+    UserPasswordReset,
+)
+from app.services.user_service import create_user_service, verify_user_login, get_password_hash
 
 router = APIRouter(route_class=EnvelopingRoute)
 logger = get_logger('user_router')
@@ -130,6 +139,63 @@ async def update_user_type(
                 "errors": [str(e)]
             }
         )
+
+
+# 重置用户登录密码（管理员）
+@router.put("/password/{user_id}")
+async def reset_user_password(
+        user_id: int,
+        payload: UserPasswordReset,
+        db: AsyncSession = Depends(get_db),
+        token_payload: dict = Depends(bm_verify_token)
+):
+    """管理员重置用户登录密码
+
+    - 只改 password 一个字段，不碰姓名/手机号/邮箱/角色；
+    - 不校验旧密码（凭管理员权限），操作人记入日志；
+    - 入库前 bcrypt 加密；JWT 中不含密码版本号，重置后该用户已登录的会话
+      在 token 过期前仍然有效，如需强制下线要另行处理。
+    """
+    # 校验新密码：非空 + 长度。bcrypt 只处理前 72 字节，超了会被静默截断，
+    # 这里按字节数卡住，避免"密码后半段其实没生效"的隐性问题。
+    pwd = (payload.new_password or "").strip()
+    if not pwd:
+        raise HTTPException(status_code=400, detail="新密码不能为空")
+    if len(pwd) < 6 or len(pwd) > 64:
+        raise HTTPException(status_code=400, detail="新密码长度需为 6-64 位")
+    if len(pwd.encode("utf-8")) > 72:
+        raise HTTPException(status_code=400, detail="新密码过长，请控制在 72 字节以内（中文按 3 字节计算）")
+
+    result = await db.execute(select(User).where(User.id == user_id))
+    db_user = result.scalars().first()
+    if not db_user:
+        raise HTTPException(status_code=404, detail="用户不存在")
+
+    try:
+        db_user.password = get_password_hash(pwd)
+        db_user.updated_at = datetime.now(timezone.utc)
+        await db.commit()
+        await db.refresh(db_user)
+    except Exception as e:
+        await db.rollback()
+        logger.error(f"重置用户密码失败 - 系统异常: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "message": "重置密码失败",
+                "errors": [str(e)]
+            }
+        )
+
+    logger.info(
+        f"管理员 {token_payload.get('user_id')} 重置了用户密码，"
+        f"目标用户ID: {user_id}, 姓名: {db_user.name}, 账号状态: {'启用' if db_user.is_active else '已停用'}"
+    )
+    return {
+        "user_id": db_user.id,
+        "user_name": db_user.name,
+        "message": "密码已重置，请通知该用户使用新密码登录"
+    }
 
 
 # 删除用户（软删除：只置 is_active=False，不动 data，保留历史关联数据）
