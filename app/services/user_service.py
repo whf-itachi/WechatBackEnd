@@ -1,6 +1,7 @@
 from sqlalchemy import select, or_
+from sqlalchemy.exc import IntegrityError
 from passlib.context import CryptContext
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 import bcrypt
 
 from app.db_services.database import AsyncSessionDep
@@ -73,24 +74,36 @@ async def verify_user_login(session: AsyncSessionDep, login_data: UserLogin) -> 
         errors.append("密码不能为空")
 
     if not errors:
-        result = await session.execute(
-            select(User).where(or_(User.name == login_data.name,User.phone == login_data.name))
-        )
-        # result = await session.execute(select(User).where(User.name == login_data.name))
-        user_info = result.scalars().first()
-        if not user_info:
+        ident = (login_data.name or "").strip()
+        # name 是唯一身份，但登录框也接受手机号，所以两列都查；
+        # 姓名命中优先（身份标识），其次手机号。
+        rows = (
+            await session.execute(
+                select(User).where(or_(User.name == ident, User.phone == ident))
+            )
+        ).scalars().all()
+
+        # 停用（软删除）的账号不参与登录
+        active = [u for u in rows if u.is_active]
+        by_name = [u for u in active if u.name == ident]
+        by_phone = [u for u in active if u.phone == ident]
+        user_info = (by_name or by_phone or [None])[0]
+
+        if not rows:
             errors.append("用户不存在")
+        elif user_info is None:
+            errors.append("该账号已停用")
         elif not verify_password(login_data.password, user_info.password):
             errors.append("密码错误")
-        elif not user_info.is_active:
-            errors.append("用户已被禁用")
     
     # 检查是否有错误
     if errors:
         raise HTTPException(
             status_code=401,
             detail={
-                "message": "登录失败",
+                # 把首个具体原因带出去（"该账号已停用"/"密码错误"…），
+                # 前端只展示 message，否则软删除后用户只会看到笼统的"登录失败"
+                "message": "登录失败：" + errors[0],
                 "errors": errors
             }
         )
@@ -129,14 +142,19 @@ async def create_user_service(session: AsyncSessionDep, user_data: UserCreate) -
         if not user_data.password:
             errors.append("密码不能为空")
             
-        # 检查邮箱是否已存在
+        # name 是唯一身份、email 也是唯一列：分别检查，给出明确提示
+        # （之前只查 email，姓名重复会直接撞唯一索引变成 500）
+        email_text = str(user_data.email)
         if not errors:
-            existing_user = await session.execute(
-                select(User).where(User.email == user_data.email)
-            )
-            if existing_user.scalars().first():
+            if (
+                await session.execute(select(User.id).where(User.name == user_data.name))
+            ).first():
+                errors.append("用户名已被占用")
+            elif (
+                await session.execute(select(User.id).where(User.email == email_text))
+            ).first():
                 errors.append("邮箱已被注册")
-            
+
         if errors:
             raise HTTPException(
                 status_code=400,
@@ -144,15 +162,24 @@ async def create_user_service(session: AsyncSessionDep, user_data: UserCreate) -
                     "message": "注册失败: " + str(errors)
                 }
             )
-            
+
         # 创建用户数据字典
         user_dict = user_data.model_dump()
+        user_dict["email"] = email_text
         # 对密码进行加密
         user_dict["password"] = get_password_hash(user_dict["password"])
-        
+
         new_user = User(**user_dict)
         session.add(new_user)
-        await session.commit()
+        try:
+            await session.commit()
+        except IntegrityError:
+            # 并发下唯一键兜底（name / email 都可能撞）
+            await session.rollback()
+            raise HTTPException(
+                status_code=400,
+                detail={"message": "注册失败: 用户名或邮箱已被占用"}
+            )
         await session.refresh(new_user)
         
         # 生成访问令牌
@@ -178,8 +205,8 @@ async def create_user_service(session: AsyncSessionDep, user_data: UserCreate) -
 
 # 获取所有用户
 async def get_users_service(session: AsyncSessionDep):
-    """获取所有用户"""
-    result = await session.execute(select(User))
+    """获取所有用户（不含已停用/软删除的账号）"""
+    result = await session.execute(select(User).where(User.is_active == True))  # noqa: E712
     return result.scalars().all()
 
 # 获取单个用户
@@ -230,10 +257,18 @@ async def update_user_service(session: AsyncSessionDep, user_id: int, user_data:
             else:
                 # 检查邮箱是否已被其他用户使用
                 existing_user = await session.execute(
-                    select(User).where(User.email == user_data.email, User.id != user_id)
+                    select(User).where(User.email == str(user_data.email), User.id != user_id)
                 )
                 if existing_user.scalars().first():
                     errors.append("邮箱已被注册")
+
+        # 用户名是唯一身份，改名时同样要查重（否则会直接撞唯一索引）
+        if user_data.name is not None and user_data.name:
+            name_conflict = await session.execute(
+                select(User.id).where(User.name == user_data.name, User.id != user_id)
+            )
+            if name_conflict.first():
+                errors.append("用户名已被占用")
                     
         # 验证密码
         if user_data.password is not None and not user_data.password:
@@ -273,10 +308,19 @@ async def update_user_service(session: AsyncSessionDep, user_id: int, user_data:
             }
         )
 
-# 删除用户
+# 删除用户（软删除：只置 is_active=False，行与历史数据都保留）
 async def delete_user_service(session: AsyncSessionDep, user_id: int):
-    """删除用户"""
+    """删除用户 —— 软删除
+
+    不物理删除 user 行：出差记录等业务数据通过 user_id 关联，
+    物理删除会连带抹掉历史账目。
+    注意：name 是唯一身份（全库唯一），因此停用账号仍占用该名称，
+    不能靠"重新注册"来恢复；需要恢复时由管理员通过改库或启用接口处理。
+    """
     user = await get_user_service(session, user_id)
-    await session.delete(user)
+    if not user.is_active:
+        return {"message": "该用户已处于停用状态"}
+    user.is_active = False
+    user.updated_at = datetime.now(timezone.utc)
     await session.commit()
-    return {"message": "用户删除成功"}
+    return {"message": "用户已删除（停用），历史数据保留"}

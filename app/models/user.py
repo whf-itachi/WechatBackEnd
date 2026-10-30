@@ -4,7 +4,13 @@ from sqlmodel import SQLModel, Field
 
 
 class User(SQLModel, table=True):
-    """用户表"""
+    """用户表
+
+    唯一性约定：
+    - `name` 是用户的唯一身份（登录标识），全库唯一；有同名新人请用新名称/加后缀区分；
+    - `email` 同样唯一；
+    - 删除即软删除（is_active=False），行不物理删除，保证出差记录等业务数据可追溯。
+    """
     id: Optional[int] = Field(default=None, primary_key=True)
     name: str = Field(max_length=50, unique=True)
     phone: str = Field(max_length=11)

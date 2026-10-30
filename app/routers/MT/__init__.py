@@ -2,6 +2,7 @@
 from fastapi import APIRouter
 from .user_router import router as user_routers
 from .ticket_router import router as ticket_routers
+from .trip_router import router as trip_routers
 from .wx.wx_auth import router as wx_auth_routers
 # 创建父路由实例，配置公共属性
 router = APIRouter(
@@ -11,4 +12,5 @@ router = APIRouter(
 # 注册子路由
 router.include_router(user_routers, prefix="/users")  # 用户管理
 router.include_router(ticket_routers, prefix="/tickets")  # 工单管理
+router.include_router(trip_routers, prefix="/trips")  # 出差记录
 router.include_router(wx_auth_routers, prefix="/wx_auth")  # 微信权鉴

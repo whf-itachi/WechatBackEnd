@@ -8,6 +8,7 @@ from app.routers.BM.rag_manager import router as rag_manage_router
 from app.routers.BM.survey_manager import router as survey_manage_router
 from app.routers.BM.survey_post import router as survey_manage_post
 from app.routers.BM.company_manager import router as company_manage_router
+from app.routers.BM.trip_manager import router as trip_manage_router
 
 # 创建父路由实例，配置公共属性
 router = APIRouter(
@@ -23,3 +24,4 @@ router.include_router(rag_manage_router, prefix="/rag")  # 大模型相关接口
 router.include_router(survey_manage_router, prefix="/survey")  # 问卷管理
 router.include_router(survey_manage_post, prefix="/survey_post")  # 问卷提交
 router.include_router(company_manage_router, prefix="/company")  # 公司信息
+router.include_router(trip_manage_router, prefix="/trip")  # 出差记录

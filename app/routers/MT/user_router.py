@@ -94,6 +94,13 @@ async def get_users(
             }
         )
 
+# 获取当前登录用户信息（必须放在 /{user_id} 之前，否则会被当成 user_id 解析）
+@router.get("/info", response_model=UserResponse)
+async def get_current_user_info(current_user: User = Depends(get_current_user)):
+    """获取当前登录用户信息：前端刷新后用它补齐姓名等资料"""
+    return {"user": UserPublic.model_validate(current_user)}
+
+
 # 根据ID获取用户信息
 @router.get("/{user_id}", response_model=UserResponse)
 async def get_user(
@@ -147,19 +154,24 @@ async def update_user(
             }
         )
 
-# 删除用户
+# 删除用户（软删除）
 @router.delete("/{user_id}")
 async def delete_user(
     user_id: int,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """删除用户"""
+    """删除用户 —— 软删除（is_active=False），历史数据保留
+
+    只允许注销自己；管理员可停用任意账号（与后台删除行为一致）。
+    """
     logger.info(f"收到删除用户请求，用户ID: {user_id}，当前用户: {current_user.id}")
+    if current_user.id != user_id and current_user.user_type != "admin":
+        raise HTTPException(status_code=403, detail="只能删除自己的账号")
     try:
-        await delete_user_service(db, user_id)
-        logger.info(f"成功删除用户，用户ID: {user_id}")
-        return {"message": "用户删除成功"}
+        result = await delete_user_service(db, user_id)
+        logger.info(f"成功停用用户，用户ID: {user_id}")
+        return result
     except HTTPException as e:
         logger.error(f"删除用户失败 - HTTP异常: {str(e)}")
         raise e

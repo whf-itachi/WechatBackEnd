@@ -36,5 +36,15 @@ async def get_current_user(
                 "errors": ["用户已被删除或禁用"]
             }
         )
-    
+
+    # 软删除 / 停用后，手里的旧 token 也必须立即失效（否则能一直调到过期）
+    if not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={
+                "message": "账号已被停用",
+                "errors": ["该账号已停用，请联系管理员"]
+            }
+        )
+
     return user 

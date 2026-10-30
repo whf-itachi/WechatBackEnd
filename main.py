@@ -65,7 +65,16 @@ async def http_exception_handler(request, exc):
 
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request, exc):
-    enveloped = ApiResponse(code=422, message="请求参数校验失败", data=exc.errors())
+    # exc.errors() 的 ctx 里可能带着 ValueError 等非 JSON 对象，直接 model_dump 会抛
+    # TypeError 把 422 变成 500，这里统一转成字符串再返回
+    details = []
+    for err in exc.errors():
+        item = {k: v for k, v in err.items() if k != "ctx"}
+        ctx = err.get("ctx")
+        if isinstance(ctx, dict):
+            item["ctx"] = {k: str(v) for k, v in ctx.items()}
+        details.append(item)
+    enveloped = ApiResponse(code=422, message="请求参数校验失败", data=details)
     return JSONResponse(status_code=422, content=enveloped.model_dump())
 
 

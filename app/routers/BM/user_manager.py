@@ -67,8 +67,8 @@ async def register_user(user_data: UserCreate, db: AsyncSession = Depends(get_db
 # 查询所有用户接口
 @router.get("/all", response_model=list[UserPublic])
 async def get_all_users(db: AsyncSession = Depends(get_db), token_payload: dict = Depends(bm_verify_token)):
-    """获取所有用户"""
-    result = await db.execute(select(User))
+    """获取所有用户（不含已软删除/停用的账号）"""
+    result = await db.execute(select(User).where(User.is_active == True))  # noqa: E712
     return result.scalars().all()
 
 
@@ -132,15 +132,24 @@ async def update_user_type(
         )
 
 
-# 删除用户
+# 删除用户（软删除：只置 is_active=False，不动 data，保留历史关联数据）
 @router.delete("/delete/{user_id}")
 async def delete_user(
         user_id: int,
         db: AsyncSession = Depends(get_db),
         token_payload: dict = Depends(bm_verify_token)
 ):
-    """删除用户"""
+    """删除用户 —— 软删除
+
+    不物理删除 `user` 行，只把 is_active 置为 False：
+    1. 出差记录等业务表通过 user_id 关联，物理删除会连带（CASCADE）抹掉历史账目；
+    2. 软删除后登录被拦截（verify_user_login 校验 is_active），并且鉴权依赖也会拒绝其旧 token。
+    """
     try:
+        # 不允许删除自己，避免把自己锁在系统外
+        if str(token_payload.get("user_id")) == str(user_id):
+            raise HTTPException(status_code=400, detail="不能删除当前登录的账号")
+
         # 查找用户
         result = await db.execute(select(User).where(User.id == user_id))
         db_user = result.scalars().first()
@@ -148,12 +157,15 @@ async def delete_user(
         if not db_user:
             raise HTTPException(status_code=404, detail="用户不存在")
 
-        # 删除用户
-        await db.delete(db_user)
+        if not db_user.is_active:
+            return {"message": "该用户已处于停用状态"}
+
+        # 软删除：保留数据，仅停用
+        db_user.is_active = False
         await db.commit()
 
-        logger.info(f"成功删除用户，用户ID: {user_id}")
-        return {"message": "用户删除成功"}
+        logger.info(f"成功停用用户（软删除），用户ID: {user_id}, 姓名: {db_user.name}")
+        return {"message": "用户已删除（停用），历史数据保留"}
 
     except HTTPException as e:
         logger.error(f"删除用户失败 - HTTP异常: {str(e)}")
