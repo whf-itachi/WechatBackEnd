@@ -19,7 +19,7 @@ import openpyxl
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import FileResponse
 from openpyxl.comments import Comment
-from openpyxl.styles import Alignment, Font, PatternFill
+from openpyxl.styles import Alignment, Font
 from openpyxl.utils import get_column_letter
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -247,12 +247,12 @@ def _build_workbook(rows) -> openpyxl.Workbook:
         "Date", "Project", "Task", "Customer", "Name",
         "Worktime Begin", "Worktime End", "Total Worktime", "Waiting time", "备注",
     ]
-    header_fill = PatternFill(start_color="366092", end_color="366092", fill_type="solid")
+    # 表头用加粗黑体区分，不加底色填充
+    header_font = Font(name="黑体", size=11, bold=True)
     for col, title in enumerate(headers, 1):
         cell = ws.cell(row=4, column=col, value=title)
-        cell.font = Font(bold=True, color="FFFFFF")
-        cell.fill = header_fill
-        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        cell.font = header_font
+        cell.alignment = Alignment(horizontal="left", vertical="center", wrap_text=True)
     ws.cell(row=4, column=9).comment = Comment(
         "小程序暂未采集「等待时间」，此列保留空值以便贴回总表时不串列。", "ICS"
     )
@@ -277,11 +277,14 @@ def _build_workbook(rows) -> openpyxl.Workbook:
     for col, width in enumerate([11, 12.33, 58, 24.33, 22.78, 19.78, 18.11, 19.33, 12, 20], 1):
         ws.column_dimensions[get_column_letter(col)].width = width
 
-    # C（Task）、J（备注）是长文本：自动换行、顶端对齐
+    # 数据行统一左对齐：日期、时间、时长默认是右对齐，和文本混排会参差不齐
+    # C（Task）、J（备注）是长文本，额外自动换行；所有单元格顶端对齐
     if rows:
         for row in ws.iter_rows(min_row=5, max_row=4 + len(rows)):
             for cell in row:
-                cell.alignment = Alignment(vertical="top", wrap_text=cell.column in (3, 10))
+                cell.alignment = Alignment(
+                    horizontal="left", vertical="top", wrap_text=cell.column in (3, 10)
+                )
     ws.freeze_panes = "A5"
 
     # ---------- Sheet2 人员汇总 ----------
@@ -289,9 +292,8 @@ def _build_workbook(rows) -> openpyxl.Workbook:
     headers2 = ["姓名", "出差天数", "记录条数", "总时长（小时）", "已填日期", "最后提交时间"]
     for col, title in enumerate(headers2, 1):
         cell = ws2.cell(row=1, column=col, value=title)
-        cell.font = Font(bold=True, color="FFFFFF")
-        cell.fill = header_fill
-        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        cell.font = header_font
+        cell.alignment = Alignment(horizontal="left", vertical="center", wrap_text=True)
 
     grouped: dict = {}
     for r, user_name in rows:
@@ -325,6 +327,12 @@ def _build_workbook(rows) -> openpyxl.Workbook:
 
     for col, width in enumerate([12, 12, 12, 16, 60, 20], 1):
         ws2.column_dimensions[get_column_letter(col)].width = width
+
+    # 汇总表数据同样左对齐
+    if grouped:
+        for row in ws2.iter_rows(min_row=2, max_row=ws2.max_row):
+            for cell in row:
+                cell.alignment = Alignment(horizontal="left", vertical="center")
     ws2.freeze_panes = "A2"
 
     return wb

@@ -3,8 +3,8 @@
 字段与 Excel「Working Overview」表对齐：
     Project / Task / Customer / Worktime Begin / Worktime End / Total Worktime / 备注
 
-总时长口径：沿用 Excel 公式 =(G-F)*24，即（结束 - 开始）× 24 小时；
-跨零点时（结束 < 开始，如 18:00 → 00:00）补 24 小时，避免出现负时长。
+总时长口径：沿用 Excel 公式 =(G-F)*24，即（结束 - 开始）× 24 小时。
+结束时间不得早于开始时间（跨零点班次不支持，接口直接拒绝），
 计算只在服务端做一次，前端只负责展示，保证导出与页面一致。
 """
 
@@ -20,7 +20,11 @@ REMARK_MAX_LEN = 500
 
 
 def calc_total_worktime(begin: Optional[time], end: Optional[time]) -> Optional[float]:
-    """(结束 - 开始) * 24，保留两位小数；跨零点按 +24h 计；缺任一端返回 None。"""
+    """(结束 - 开始) * 24，保留两位小数；缺任一端返回 None。
+
+    接口层已禁止「结束早于开始」，正常提交不会走到跨零点的补 24h 分支；
+    保留它是为了兼容历史数据（后端改规则之前写入的跨零点记录）。
+    """
     if begin is None or end is None:
         return None
     minutes = (end.hour * 60 + end.minute) - (begin.hour * 60 + begin.minute)
@@ -85,6 +89,10 @@ class TripRecordPayload(BaseModel):
         # 开始、结束必须成对出现，否则算不出总时长
         if (self.worktime_begin is None) != (self.worktime_end is None):
             raise ValueError("工作开始时间与结束时间需要同时填写")
+        # 结束不能早于开始：业务上不再接受跨零点班次（如 18:00 → 02:00），
+        # 前端滚轮已按此约束限制可选范围，这里兜住直接调接口的情况。
+        if self.worktime_begin and self.worktime_end and self.worktime_end < self.worktime_begin:
+            raise ValueError("结束时间不能早于开始时间")
         return self
 
     @property
