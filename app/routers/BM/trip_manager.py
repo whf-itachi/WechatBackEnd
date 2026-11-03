@@ -19,7 +19,7 @@ import openpyxl
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import FileResponse
 from openpyxl.comments import Comment
-from openpyxl.styles import Alignment, Font
+from openpyxl.styles import Alignment, Border, Font, Side
 from openpyxl.utils import get_column_letter
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -36,6 +36,10 @@ router = APIRouter(route_class=EnvelopingRoute)
 logger = get_logger("trip_manager")
 
 WEEKDAY_CN = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
+
+# 导出版式的细边框（与原表一致，四边同线型）
+_THIN = Side(style="thin")
+THIN_BORDER = Border(left=_THIN, right=_THIN, top=_THIN, bottom=_THIN)
 
 
 def _resolve_cycle(cycle: Optional[str]) -> tuple:
@@ -285,6 +289,11 @@ def _build_workbook(rows) -> openpyxl.Workbook:
                 cell.alignment = Alignment(
                     horizontal="left", vertical="top", wrap_text=cell.column in (3, 10)
                 )
+
+    # 有内容的区域统一加细边框：标题行、空行、表头、数据行一个整框（与原表一致）
+    for row in ws.iter_rows(min_row=1, max_row=4 + len(rows), max_col=10):
+        for cell in row:
+            cell.border = THIN_BORDER
     ws.freeze_panes = "A5"
 
     # ---------- Sheet2 人员汇总 ----------
@@ -333,6 +342,11 @@ def _build_workbook(rows) -> openpyxl.Workbook:
         for row in ws2.iter_rows(min_row=2, max_row=ws2.max_row):
             for cell in row:
                 cell.alignment = Alignment(horizontal="left", vertical="center")
+
+    # 汇总表（表头 + 数据）也套细边框
+    for row in ws2.iter_rows(min_row=1, max_row=max(1, ws2.max_row), max_col=6):
+        for cell in row:
+            cell.border = THIN_BORDER
     ws2.freeze_panes = "A2"
 
     return wb
