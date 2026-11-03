@@ -127,8 +127,7 @@ WechatBackEnd/
 |---|---|---|
 | GET | `/BM/trip/cycles` | 最近 12 个结算月（下拉用） |
 | GET | `/BM/trip/list` | 明细，支持 `cycle / name / project / trip_date` + 分页 |
-| GET | `/BM/trip/summary` | 按人汇总：出差天数、已填日期、最后提交时间、未填人员名单 |
-| GET | `/BM/trip/export/excel` | 导出 xlsx，含「Working Overview」（与源表 A~J 列一致，可直接贴回）与「人员汇总」两个 sheet |
+| GET | `/BM/trip/export/excel` | 导出 xlsx，仅一个 sheet「Working Overview」（A~I 九列，与源表对齐、可直接贴回；Waiting time 列已去掉）。加 `all_data=true` 时忽略结算月与姓名/项目筛选，导出全部历史记录 |
 
 ### 建表 / 升级
 
