@@ -156,15 +156,12 @@ async def reset_user_password(
     - 入库前 bcrypt 加密；JWT 中不含密码版本号，重置后该用户已登录的会话
       在 token 过期前仍然有效，如需强制下线要另行处理。
     """
-    # 校验新密码：非空 + 长度。bcrypt 只处理前 72 字节，超了会被静默截断，
-    # 这里按字节数卡住，避免"密码后半段其实没生效"的隐性问题。
+    # 校验新密码：非空 + 长度 3-10 位，不做复杂度/字节数等额外限制
     pwd = (payload.new_password or "").strip()
     if not pwd:
         raise HTTPException(status_code=400, detail="新密码不能为空")
-    if len(pwd) < 6 or len(pwd) > 64:
-        raise HTTPException(status_code=400, detail="新密码长度需为 6-64 位")
-    if len(pwd.encode("utf-8")) > 72:
-        raise HTTPException(status_code=400, detail="新密码过长，请控制在 72 字节以内（中文按 3 字节计算）")
+    if len(pwd) < 3 or len(pwd) > 10:
+        raise HTTPException(status_code=400, detail="新密码长度需为 3-10 位")
 
     result = await db.execute(select(User).where(User.id == user_id))
     db_user = result.scalars().first()

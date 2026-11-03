@@ -138,9 +138,11 @@ async def create_user_service(session: AsyncSessionDep, user_data: UserCreate) -
         elif not validate_email(user_data.email):
             errors.append("邮箱格式不正确")
             
-        # 验证密码
+        # 验证密码（3-10 位；schema 已拦一道，这里兜住直接调用 service 的场景）
         if not user_data.password:
             errors.append("密码不能为空")
+        elif not (3 <= len(user_data.password) <= 10):
+            errors.append("密码长度需为 3-10 位")
             
         # name 是唯一身份、email 也是唯一列：分别检查，给出明确提示
         # （之前只查 email，姓名重复会直接撞唯一索引变成 500）

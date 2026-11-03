@@ -1,9 +1,13 @@
-"""后台管理 —— 出差记录查询 / 汇总 / 导出
+"""后台管理 —— 出差记录（工作日报）查询 / 汇总 / 导出
 
 查询口径：
 - 一律按 cycle_key（结算月）过滤，边界日 25 号不会被相邻两个月重复统计；
-- 明细支持按姓名、出差原因、具体日期再过滤；
-- 汇总给出「每个人填了几条、几天 + 具体日期 + 最后提交时间」，并列出周期内一条都没填的账号。
+- 明细支持按姓名、项目、具体日期再过滤；
+- 汇总给出「每个人填了几条、几天、时长合计 + 具体日期 + 最后提交时间」，并列出周期内一条都没填的账号；
+- 导出工作表与 `Daily Report in China all_2026.xlsx` 的「Working Overview」逐列对齐：
+  A Date / B Project / C Task / D Customer / E Name /
+  F Worktime Begin / G Worktime End / H Total Worktime / I Waiting time / J 备注。
+  Waiting time（等待时间）本期不在小程序里采集，保留空列只是为了贴回原表时不串列。
 """
 
 import tempfile
@@ -14,7 +18,9 @@ from typing import Optional
 import openpyxl
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import FileResponse
+from openpyxl.comments import Comment
 from openpyxl.styles import Alignment, Font, PatternFill
+from openpyxl.utils import get_column_letter
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -37,6 +43,32 @@ def _resolve_cycle(cycle: Optional[str]) -> tuple:
         return cycle_by_key(cycle) if cycle else current_cycle()
     except ValueError:
         raise HTTPException(status_code=400, detail="结算月格式应为 YYYY-MM")
+
+
+def _as_float(value) -> Optional[float]:
+    """DECIMAL → float，避免 JSON 里出现字符串型数值"""
+    return None if value is None else float(value)
+
+
+def _record_dict(r: TripRecord, user_name: Optional[str]) -> dict:
+    """后台明细行，字段与导出列一一对应"""
+    return {
+        "id": r.id,
+        "user_id": r.user_id,
+        "user_name": user_name or "（账号已删除）",
+        "trip_date": r.trip_date.isoformat(),
+        "weekday": WEEKDAY_CN[r.trip_date.weekday()],
+        "project": r.project,
+        "task": r.task,
+        "customer": r.customer,
+        "worktime_begin": r.worktime_begin.strftime("%H:%M") if r.worktime_begin else None,
+        "worktime_end": r.worktime_end.strftime("%H:%M") if r.worktime_end else None,
+        "total_worktime": _as_float(r.total_worktime),
+        "remark": r.remark,
+        "cycle_key": r.cycle_key,
+        "create_at": to_cn(r.create_at),
+        "update_at": to_cn(r.update_at),
+    }
 
 
 @router.get("/cycles", summary="可查询的结算月列表")
@@ -63,7 +95,7 @@ async def list_records(
     page_size: int = Query(20, ge=1, le=200),
     cycle: Optional[str] = Query(None, description="结算月 YYYY-MM"),
     name: Optional[str] = Query(None, description="姓名模糊匹配"),
-    reason: Optional[str] = Query(None, description="出差原因模糊匹配"),
+    project: Optional[str] = Query(None, description="项目模糊匹配"),
     trip_date: Optional[str] = Query(None, description="精确到某一天 YYYY-MM-DD"),
     db: AsyncSession = Depends(get_db),
     token_payload: dict = Depends(bm_verify_token),
@@ -78,8 +110,8 @@ async def list_records(
         )
         if name:
             stmt = stmt.where(User.name.ilike(f"%{name}%"))
-        if reason:
-            stmt = stmt.where(TripRecord.trip_reason.ilike(f"%{reason}%"))
+        if project:
+            stmt = stmt.where(TripRecord.project.ilike(f"%{project}%"))
         if trip_date:
             try:
                 exact = datetime.strptime(trip_date, "%Y-%m-%d").date()
@@ -106,19 +138,7 @@ async def list_records(
             "cycle_key": key,
             "start_date": start.isoformat(),
             "end_date": end.isoformat(),
-            "items": [
-                {
-                    "id": r.id,
-                    "user_id": r.user_id,
-                    "user_name": user_name or "（账号已删除）",
-                    "trip_date": r.trip_date.isoformat(),
-                    "weekday": WEEKDAY_CN[r.trip_date.weekday()],
-                    "trip_reason": r.trip_reason,
-                    "cycle_key": r.cycle_key,
-                    "create_at": to_cn(r.create_at),
-                }
-                for r, user_name in page_rows
-            ],
+            "items": [_record_dict(r, user_name) for r, user_name in page_rows],
         }
     except HTTPException:
         raise
@@ -155,11 +175,13 @@ async def summary_by_user(
                     "user_id": r.user_id,
                     "dates": set(),
                     "records": 0,
+                    "total_worktime": 0.0,
                     "last_submit": None,
                 },
             )
             item["dates"].add(r.trip_date)
             item["records"] += 1
+            item["total_worktime"] += _as_float(r.total_worktime) or 0.0
             if r.create_at and (item["last_submit"] is None or r.create_at > item["last_submit"]):
                 item["last_submit"] = r.create_at
 
@@ -171,6 +193,7 @@ async def summary_by_user(
                     "user_name": name_map.get(item["user_id"]) or "（账号已删除）",
                     "filled_days": len(item["dates"]),
                     "record_count": item["records"],
+                    "total_worktime": round(item["total_worktime"], 2),
                     "dates": sorted(d.isoformat() for d in item["dates"]),
                     "last_submit": to_cn(item["last_submit"]),
                 }
@@ -190,6 +213,7 @@ async def summary_by_user(
             "end_date": end.isoformat(),
             "total_records": len(rows),
             "total_users": len(grouped),
+            "total_worktime": round(sum(_as_float(r.total_worktime) or 0.0 for r in rows), 2),
             "unfilled_users": unfilled,
             "items": items,
         }
@@ -200,16 +224,122 @@ async def summary_by_user(
         raise HTTPException(status_code=500, detail="查询出差汇总失败")
 
 
-@router.get("/export/excel", summary="按结算月导出 Excel")
+def _build_workbook(rows) -> openpyxl.Workbook:
+    """组装导出工作簿：Sheet1 与原表「Working Overview」同版式，Sheet2 为人员汇总。
+
+    rows: [(TripRecord, user_name), ...]，已按日期、姓名排好序。
+    抽成纯函数是为了不连数据库也能直接验证导出版式。
+    """
+    wb = openpyxl.Workbook()
+
+    # ---------- Sheet1：Working Overview ----------
+    ws = wb.active
+    ws.title = "Working Overview"
+
+    ws["A1"] = "Daily Report Technician China"
+    ws["A1"].font = Font(bold=True, size=14)
+    ws["A1"].alignment = Alignment(horizontal="center", vertical="center")
+    ws.merge_cells("A1:J1")
+    ws.row_dimensions[1].height = 28
+
+    # 表头放在第 4 行，与原表一致：复制数据行即可直接贴回总表
+    headers = [
+        "Date", "Project", "Task", "Customer", "Name",
+        "Worktime Begin", "Worktime End", "Total Worktime", "Waiting time", "备注",
+    ]
+    header_fill = PatternFill(start_color="366092", end_color="366092", fill_type="solid")
+    for col, title in enumerate(headers, 1):
+        cell = ws.cell(row=4, column=col, value=title)
+        cell.font = Font(bold=True, color="FFFFFF")
+        cell.fill = header_fill
+        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    ws.cell(row=4, column=9).comment = Comment(
+        "小程序暂未采集「等待时间」，此列保留空值以便贴回总表时不串列。", "ICS"
+    )
+
+    for idx, (r, user_name) in enumerate(rows):
+        row = 5 + idx
+        ws.cell(row=row, column=1, value=r.trip_date).number_format = "yyyy-mm-dd"
+        ws.cell(row=row, column=2, value=r.project)
+        ws.cell(row=row, column=3, value=r.task)
+        ws.cell(row=row, column=4, value=r.customer)
+        ws.cell(row=row, column=5, value=user_name or "（账号已删除）")
+        if r.worktime_begin:
+            ws.cell(row=row, column=6, value=r.worktime_begin).number_format = "hh:mm"
+        if r.worktime_end:
+            ws.cell(row=row, column=7, value=r.worktime_end).number_format = "hh:mm"
+        if r.total_worktime is not None:
+            ws.cell(row=row, column=8, value=_as_float(r.total_worktime)).number_format = "0.00"
+        # I 列 Waiting time 留空
+        ws.cell(row=row, column=10, value=r.remark)
+
+    # 列宽照抄原表，贴回时不至于错位
+    for col, width in enumerate([11, 12.33, 58, 24.33, 22.78, 19.78, 18.11, 19.33, 12, 20], 1):
+        ws.column_dimensions[get_column_letter(col)].width = width
+
+    # C（Task）、J（备注）是长文本：自动换行、顶端对齐
+    if rows:
+        for row in ws.iter_rows(min_row=5, max_row=4 + len(rows)):
+            for cell in row:
+                cell.alignment = Alignment(vertical="top", wrap_text=cell.column in (3, 10))
+    ws.freeze_panes = "A5"
+
+    # ---------- Sheet2 人员汇总 ----------
+    ws2 = wb.create_sheet("人员汇总")
+    headers2 = ["姓名", "出差天数", "记录条数", "总时长（小时）", "已填日期", "最后提交时间"]
+    for col, title in enumerate(headers2, 1):
+        cell = ws2.cell(row=1, column=col, value=title)
+        cell.font = Font(bold=True, color="FFFFFF")
+        cell.fill = header_fill
+        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+
+    grouped: dict = {}
+    for r, user_name in rows:
+        item = grouped.setdefault(
+            r.user_id,
+            {
+                "name": user_name or "（账号已删除）",
+                "dates": set(),
+                "records": 0,
+                "hours": 0.0,
+                "last": None,
+            },
+        )
+        item["dates"].add(r.trip_date)
+        item["records"] += 1
+        item["hours"] += _as_float(r.total_worktime) or 0.0
+        if r.create_at and (item["last"] is None or r.create_at > item["last"]):
+            item["last"] = r.create_at
+
+    for item in sorted(grouped.values(), key=lambda x: (-x["records"], x["name"])):
+        ws2.append(
+            [
+                item["name"],
+                len(item["dates"]),
+                item["records"],
+                round(item["hours"], 2),
+                "、".join(sorted(d.isoformat() for d in item["dates"])),
+                to_cn(item["last"]).strftime("%Y-%m-%d %H:%M:%S") if item["last"] else "",
+            ]
+        )
+
+    for col, width in enumerate([12, 12, 12, 16, 60, 20], 1):
+        ws2.column_dimensions[get_column_letter(col)].width = width
+    ws2.freeze_panes = "A2"
+
+    return wb
+
+
+@router.get("/export/excel", summary="按结算月导出 Excel（Working Overview 版式）")
 async def export_excel(
     cycle: Optional[str] = Query(None, description="结算月 YYYY-MM"),
     name: Optional[str] = Query(None, description="仅导出指定姓名（模糊）"),
-    reason: Optional[str] = Query(None, description="仅导出指定出差原因（模糊）"),
+    project: Optional[str] = Query(None, description="仅导出指定项目（模糊）"),
     db: AsyncSession = Depends(get_db),
     token_payload: dict = Depends(bm_verify_token),
 ):
     start, end, key = _resolve_cycle(cycle)
-    logger.info(f"导出出差记录 Excel cycle={key} name={name}")
+    logger.info(f"导出出差记录 Excel cycle={key} name={name} project={project}")
 
     try:
         stmt = (
@@ -219,8 +349,8 @@ async def export_excel(
         )
         if name:
             stmt = stmt.where(User.name.ilike(f"%{name}%"))
-        if reason:
-            stmt = stmt.where(TripRecord.trip_reason.ilike(f"%{reason}%"))
+        if project:
+            stmt = stmt.where(TripRecord.project.ilike(f"%{project}%"))
         rows = (
             await db.execute(
                 stmt.order_by(
@@ -231,72 +361,7 @@ async def export_excel(
             )
         ).all()
 
-        wb = openpyxl.Workbook()
-
-        # ---------- Sheet1 明细 ----------
-        ws = wb.active
-        ws.title = "出差明细"
-        headers = ["序号", "姓名", "出差日期", "星期", "出差原因", "提交时间", "结算月"]
-        header_fill = PatternFill(start_color="366092", end_color="366092", fill_type="solid")
-        for col, title in enumerate(headers, 1):
-            cell = ws.cell(row=1, column=col, value=title)
-            cell.font = Font(bold=True, color="FFFFFF")
-            cell.fill = header_fill
-            cell.alignment = Alignment(horizontal="center", vertical="center")
-
-        for idx, (r, user_name) in enumerate(rows, 1):
-            ws.append(
-                [
-                    idx,
-                    user_name or "（账号已删除）",
-                    r.trip_date.isoformat(),
-                    WEEKDAY_CN[r.trip_date.weekday()],
-                    r.trip_reason,
-                    to_cn(r.create_at).strftime("%Y-%m-%d %H:%M:%S") if r.create_at else "",
-                    r.cycle_key,
-                ]
-            )
-
-        for col, width in enumerate([6, 12, 14, 8, 60, 20, 10], 1):
-            ws.column_dimensions[openpyxl.utils.get_column_letter(col)].width = width
-        # 出差原因是自由文本，可能带换行，纵向靠上并自动换行
-        for row in ws.iter_rows(min_row=2, min_col=5, max_col=5):
-            for cell in row:
-                cell.alignment = Alignment(vertical="top", wrap_text=True)
-        ws.freeze_panes = "A2"
-
-        # ---------- Sheet2 人员汇总 ----------
-        ws2 = wb.create_sheet("人员汇总")
-        headers2 = ["姓名", "出差天数", "已填日期", "最后提交时间"]
-        for col, title in enumerate(headers2, 1):
-            cell = ws2.cell(row=1, column=col, value=title)
-            cell.font = Font(bold=True, color="FFFFFF")
-            cell.fill = header_fill
-            cell.alignment = Alignment(horizontal="center", vertical="center")
-
-        grouped: dict = {}
-        for r, user_name in rows:
-            item = grouped.setdefault(
-                r.user_id, {"name": user_name or "（账号已删除）", "dates": set(), "records": 0, "last": None}
-            )
-            item["dates"].add(r.trip_date)
-            item["records"] += 1
-            if r.create_at and (item["last"] is None or r.create_at > item["last"]):
-                item["last"] = r.create_at
-
-        for item in sorted(grouped.values(), key=lambda x: (-x["records"], x["name"])):
-            ws2.append(
-                [
-                    item["name"],
-                    len(item["dates"]),
-                    "、".join(sorted(d.isoformat() for d in item["dates"])),
-                    to_cn(item["last"]).strftime("%Y-%m-%d %H:%M:%S") if item["last"] else "",
-                ]
-            )
-
-        for col, width in enumerate([12, 12, 60, 20], 1):
-            ws2.column_dimensions[openpyxl.utils.get_column_letter(col)].width = width
-        ws2.freeze_panes = "A2"
+        wb = _build_workbook(rows)
 
         filename = f"出差记录_{key}_{datetime.now().strftime('%Y%m%d%H%M%S')}.xlsx"
         with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as tmp:

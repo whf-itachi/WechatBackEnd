@@ -43,8 +43,8 @@ WechatBackEnd/
 ├── main.py                 # 应用入口
 ├── requirements.txt        # 项目依赖
 ├── scripts/                # 运维/迁移脚本（建表、清理等）
-│   ├── init_trip_table.py  # 出差记录表初始化/升级（幂等）
-│   └── sql/trip_record.sql # 出差记录表 DDL
+│   ├── migrate_trip.py     # 出差记录表建表/升级（幂等，二合一）
+│   └── render_pdf_cache.py # PDF 渲染缓存工具
 ├── .env                    # 环境变量配置
 └── README.md               # 项目说明文档
 ```
@@ -91,19 +91,21 @@ WechatBackEnd/
 | 结算周期 | `[上月 25 日, 本月 25 日]`，结算月取结束月（如 10-25 ~ 11-25 归属 `2026-11`） |
 | 截止规则 | 今天 ≥ 25 号即进入新周期，上一周期自动关闭 —— 即"过了 25 号不能填" |
 | 一天一条 | 同一用户同一天最多一条记录，由唯一索引 `uq_trip_user_date (user_id, trip_date)` 保证 |
-| 写入即锁定 | 只提供新增接口，没有 update / delete；已填日期前端只做只读展示 |
+| 截止前可改 | 记录所属周期未过截止日（25 日）时可 `PUT` 修改；截止后锁定只读，不再提供 update / delete |
 | 可补填 | 周期内任意 `<= 今天` 的日期都能填，允许最后一天集中补录 |
-| 内容自由 | `trip_reason` 为自由文本（≤1000 字，保留换行），系统只记录不解析 |
+| 字段长度 | `project` ≤50、`task` ≤500、`customer` ≤100、`remark` ≤500；系统只记录不解析内容 |
+| 工时 | `total_worktime = (worktime_end - worktime_begin) × 24`，跨零点补 24 小时；只在服务端算一次并落库 |
 | 身份 | 只能填自己的，`user_id` 取自登录态；姓名不落库，展示时 join `user` 表 |
 
 周期计算集中在 `app/utils/trip_cycle.py`（唯一事实来源），接口与前端都不自行推算日期。
 
 ### 数据表
 
-`trip_record`：`id / user_id / trip_date / trip_reason / cycle_key / create_at`
+`trip_record`：`id / user_id / trip_date / project / task / customer / worktime_begin / worktime_end / total_worktime / remark / cycle_key / create_at / update_at`
 
 - `trip_date` = 用户日历上点选的那一天（业务主键级别的含义），不是提交时间；
 - `cycle_key` = 归属结算月 `YYYY-MM`，封账快照，避免日后调整截止日导致历史账目被重算；
+- `update_at` = 最后修改时间，改过才有值（后台列表显示「最后修改」）；
 - 索引：`uq_trip_user_date (user_id, trip_date)` 唯一、`ix_trip_record_trip_date`、`ix_trip_cycle_key`；
 - 外键 `trip_record_user_fk` 为 `ON DELETE RESTRICT`，防止误删用户连带抹掉历史记录。
 
@@ -114,7 +116,8 @@ WechatBackEnd/
 | 方法 | 路径 | 说明 |
 |---|---|---|
 | GET | `/api/v1/trips/cycle` | 当前周期起止、`editable_until`（最后可填日）、`record_count` / `filled_days` 及本人记录 |
-| POST | `/api/v1/trips/record` | 提交某天记录 `{trip_date, trip_reason}`；重复提交返回 409 |
+| POST | `/api/v1/trips/record` | 提交某天记录 `{trip_date, project, task, customer, worktime_begin, worktime_end, remark}`；重复提交返回 409 |
+| PUT | `/api/v1/trips/record/{id}` | 修改本人记录（仅所属周期未截止时）；总时长由服务端重算，`trip_date` / `cycle_key` 不可改 |
 | GET | `/api/v1/trips/records` | 本人某周期的记录列表 |
 
 后台（需管理员）：
@@ -122,21 +125,24 @@ WechatBackEnd/
 | 方法 | 路径 | 说明 |
 |---|---|---|
 | GET | `/BM/trip/cycles` | 最近 12 个结算月（下拉用） |
-| GET | `/BM/trip/list` | 明细，支持 `cycle / name / reason / trip_date` + 分页 |
+| GET | `/BM/trip/list` | 明细，支持 `cycle / name / project / trip_date` + 分页 |
 | GET | `/BM/trip/summary` | 按人汇总：出差天数、已填日期、最后提交时间、未填人员名单 |
-| GET | `/BM/trip/export/excel` | 导出 xlsx，含「出差明细」「人员汇总」两个 sheet |
+| GET | `/BM/trip/export/excel` | 导出 xlsx，含「Working Overview」（与源表 A~J 列一致，可直接贴回）与「人员汇总」两个 sheet |
 
 ### 建表 / 升级
 
-项目没有 `create_all`，`alembic/versions` 为空，**表需手动创建**：
+项目没有 `create_all`，`alembic/versions` 为空，**表结构由脚本落地**（服务启动不建表）：
 
 ```bash
 cd WechatBackEnd
-./myenv/bin/python scripts/init_trip_table.py            # 幂等，重复执行安全
-./myenv/bin/python scripts/init_trip_table.py --dedupe   # 仅在历史数据存在同一天多条时使用
+./myenv/bin/python scripts/migrate_trip.py               # 幂等：空库建 v2，老库原地升到 v2
+./myenv/bin/python scripts/migrate_trip.py --dry-run     # 只体检不改（上生产先跑这个）
+./myenv/bin/python scripts/migrate_trip.py --move-to-task # 超长 project 原文搬进 task 再截断（推荐）
+./myenv/bin/python scripts/migrate_trip.py --dedupe      # 清理"同一天多条"重复并建唯一索引
+./myenv/bin/python scripts/migrate_trip.py --print-sql   # 只打印 v2 建表 DDL（给 DBA / 存档）
 ```
 
-脚本会做三件事：建表（带唯一索引）、识别旧结构自动升级（`device_no → trip_reason`、补索引、删 `user_name`、外键改 RESTRICT）、检测到重复数据时**默认只报告不删数据**并跳过建唯一索引，确认可清理时加 `--dedupe`（每组保留 id 最小的一条）。
+脚本做的事：建表（含唯一索引 `uq_trip_user_date`、外键 `ON DELETE RESTRICT`）；老表原地升级（`device_no / trip_reason → project`、补齐 `task / customer / worktime_* / total_worktime / remark / update_at`、删历史 `user_name` 列、回填总时长）；`project` 收敛到 50 字符时**默认不动超长历史数据**（只打印明细），确认后加 `--move-to-task`（原文搬进 task，不丢内容）或 `--truncate`（会丢字）；检测到重复数据时同样默认只报告并跳过建唯一索引，确认可清理时加 `--dedupe`（每组保留 id 最小的一条）。重复执行安全，已到位的步骤全部跳过。
 
 ### 实现要点
 
@@ -196,7 +202,7 @@ alembic revision --autogenerate -m "Initial migration"
 alembic upgrade head
 ```
 
-> 说明：当前 `alembic/versions` 为空，服务启动也不会自动建表。出差记录表 `trip_record` 请使用 `scripts/init_trip_table.py` 创建（幂等），详见上文「出差记录填写模块 → 建表 / 升级」。
+> 说明：当前 `alembic/versions` 为空，服务启动也不会自动建表。出差记录表 `trip_record` 请使用 `scripts/migrate_trip.py` 创建/升级（幂等），详见上文「出差记录填写模块 → 建表 / 升级」。
 
 ## 启动服务
 
@@ -241,7 +247,7 @@ FastAPI 自动生成了交互式 API 文档：
 
 - **User**: 用户信息（`name`、`email` 各自唯一，姓名即唯一身份；删除为软删除 `is_active=False`）
 - **Ticket**: 工单信息
-- **TripRecord**: 出差记录（`user_id`、`trip_date`、`trip_reason`、`cycle_key`、`create_at`）
+- **TripRecord**: 出差记录 / 工作日报（`user_id`、`trip_date`、`project`、`task`、`customer`、`worktime_begin`、`worktime_end`、`total_worktime`、`remark`、`cycle_key`、`create_at`、`update_at`）
 - **Survey**: 问卷信息
 - **RAG**: 知识库相关模型
 

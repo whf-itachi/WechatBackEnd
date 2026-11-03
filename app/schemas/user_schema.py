@@ -12,7 +12,8 @@ class UserBase(SQLModel):
 
 # 用户创建模型
 class UserCreate(UserBase):
-    password: str = Field(..., description="密码")
+    # 密码规则统一为 3-10 位，不做复杂度/字节数等额外限制
+    password: str = Field(..., min_length=3, max_length=10, description="密码，3-10 位")
 
     class Config:
         json_schema_extra = {
@@ -38,7 +39,18 @@ class UserTypeUpdate(SQLModel):
 
 # 管理员重置用户密码
 class UserPasswordReset(SQLModel):
-    new_password: str = Field(..., description="新密码（明文，后端加密后入库）")
+    new_password: str = Field(
+        ..., min_length=3, max_length=10, description="新密码（3-10 位，明文，后端加密后入库）"
+    )
+
+
+# 用户自助修改密码（需校验原密码）
+class UserPasswordChange(SQLModel):
+    # 原密码不限制长度：历史账号的密码规则可能与现在不同，限制会导致改不了密码
+    old_password: str = Field(..., description="原密码（明文，仅用于校验，不入库）")
+    new_password: str = Field(
+        ..., min_length=3, max_length=10, description="新密码（3-10 位，明文，后端加密后入库）"
+    )
 
 # 用户登录模型
 class UserLogin(SQLModel):
