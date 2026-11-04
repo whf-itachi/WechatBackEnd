@@ -44,6 +44,7 @@ WechatBackEnd/
 ├── requirements.txt        # 项目依赖
 ├── scripts/                # 运维/迁移脚本（建表、清理等）
 │   ├── migrate_trip.py     # 出差记录表建表/升级（幂等，二合一）
+│   ├── migrate_expense.py  # 出差费用表建表/补列（幂等）
 │   └── render_pdf_cache.py # PDF 渲染缓存工具
 ├── .env                    # 环境变量配置
 └── README.md               # 项目说明文档
@@ -58,6 +59,7 @@ WechatBackEnd/
 - **用户管理**: 用户注册、登录、个人信息管理
 - **工单管理**: 工单创建、查询、状态更新
 - **出差记录填写**: 按天登记项目、工作内容、客户与起止时间，周期查询（详见下方「出差记录填写模块」）
+- **出差费用报销**: 按发票登记票期、项目、报销种类与金额，一天可多笔（详见下方「出差费用报销模块」）
 - **微信授权**: 微信登录、授权相关功能
 - **AI助手**: 基于阿里百炼的大语言模型交互
 
@@ -68,6 +70,7 @@ WechatBackEnd/
 - **用户管理**: 用户信息管理、权限控制、软删除（停用）、重置登录密码（`PUT /BM/user/password/{user_id}`）
 - **工单管理**: 工单审核、处理流程管理
 - **出差记录管理**: 填写情况查询、按人汇总、Excel 导出
+- **出差费用管理**: 费用明细查询、按结算月/姓名/项目/种类/票期筛选、Expenses 版式全量导出
 - **后台信息管理**: 系统配置、公告等
 - **RAG管理**: 检索增强生成功能管理
 - **问卷管理**: 问卷创建、发布、结果统计
@@ -151,6 +154,93 @@ cd WechatBackEnd
 - **软删除联动**：用户删除改为 `is_active=False`（不物理删除），鉴权会校验该字段；出差记录因此始终可追溯，重新激活账号后历史记录仍在；
 - **当前用户信息**：`GET /api/v1/users/info` 返回登录用户资料（供前端刷新后补齐姓名），该路由必须声明在 `GET /users/{user_id}` 之前。
 
+## 出差费用报销模块
+
+面向出差员工登记每张发票的费用（对应 `Daily Report in China` 的 Expenses 表）：票期、项目、报销种类、金额、注释。周期与出差记录同一套（每月 25 日截止），后台可查询并按 Expenses 版式全量导出 Excel。
+
+### 与出差记录的关键差别
+
+| 维度 | 出差记录 trip_record | 出差费用 expense_record |
+|---|---|---|
+| 一天几条 | 一天一条（唯一索引兜底） | **一天可以多条**，一天里可能有好几张发票 |
+| 时间表示 | 单个 `trip_date` | `expense_date` + `expense_date_end`，一张票跨几天就填区间 |
+| 姓名 | 不落库，join `user` | 同左（`name` 列在表里仍记 `user_id`） |
+| 报销种类 | — | **固定下拉**，不接受自由填写；劳保用品 / 工具 / 其他必须补明细 |
+| 删除 | 不提供 | 提供（仅本周期截止前） |
+
+### 业务规则
+
+| 规则 | 说明 |
+|---|---|
+| 结算周期 | 复用 `app/utils/trip_cycle.py`：`[上月 25 日, 本月 25 日]`，`cycle_key` 按**发票起始日期**归属 |
+| 可填日期 | 只允许当前周期内、且不晚于今天的日期；跨天费用两端都要落在窗口内 |
+| 截止前可改可删 | 记录所属周期截止日（25 日）之前允许 `PUT` / `DELETE`；截止后锁定只读 |
+| 金额 | `DECIMAL(10,2)`，必须 > 0 且 ≤ 100000，服务端统一保留两位小数 |
+| 报销种类 | 6 类固定选项，见 `app/utils/expense_reason.py`（字典唯一事实来源） |
+| 劳保用品 / 工具 / 其他 | 选中后 `reason_detail` 必填（≤100 字），导出拼成「工具-22mm 套筒」 |
+| 字段长度 | `project` ≤50（可空）、`explanation` ≤500、`reason` ≤20 |
+| 身份 | 只能填自己的，`user_id` 取自登录态；改/删他人记录一律 404 |
+
+报销种类字典（`app/utils/expense_reason.py`，接口 `GET /expenses/reasons` 下发，前端不硬编码）：
+
+1. **交通工具**：出租车、滴滴车、公交车、大巴车、地铁、火车、飞机
+2. **其他费用**：租车费、汽油费、过路费、住宿费、快递费、焊工
+3. **业务招待费**：客户礼物、餐饮费
+4. **劳保用品**（需明细）
+5. **工具**（需明细）
+6. **其他**（需明细）
+
+### 数据表
+
+`expense_record`：`id / user_id / expense_date / expense_date_end / project / reason / reason_detail / expense / explanation / cycle_key / create_at / update_at`
+
+- `expense_date` 是发票产生日期，同时也是 `cycle_key` 的归属依据；`expense_date_end` 为空表示单日发票；
+- 索引：`ix_expense_user_date (user_id, expense_date)`、`ix_expense_date`、`ix_expense_cycle_key`；**没有唯一键**（一天可多条）；
+- 外键 `expense_record_user_fk` 为 `ON DELETE RESTRICT`，防止误删用户连带抹掉历史账目；
+- 源表的 `Reimbursement date`（贴票报销日期）由财务线下填写，本系统不建列、不导出。
+
+### 接口
+
+移动端（需登录）：
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | `/api/v1/expenses/reasons` | 报销种类选项（类别 + 具体项 + 必填明细标记） |
+| GET | `/api/v1/expenses/cycle` | 当期周期信息、本人明细、笔数与金额合计 |
+| POST | `/api/v1/expenses/record` | 提交一笔 `{expense_date, expense_date_end?, project?, reason, reason_detail?, expense, explanation?}` |
+| PUT | `/api/v1/expenses/record/{id}` | 修改本人一笔（仅所属周期截止前）；改日期会重新归属结算月 |
+| DELETE | `/api/v1/expenses/record/{id}` | 删除本人一笔（仅所属周期截止前） |
+| GET | `/api/v1/expenses/records` | 本人某周期的费用明细 |
+
+后台（需管理员）：
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | `/BM/expense/reasons` | 报销种类选项（筛选下拉用） |
+| GET | `/BM/expense/cycles` | 最近 12 个结算月（下拉用） |
+| GET | `/BM/expense/list` | 明细，支持 `cycle / name / project / reason_group / date_from / date_to` + 分页，返回 `total_amount` |
+| GET | `/BM/expense/export/excel` | 全量导出 xlsx，工作表「Expenses」 |
+
+### 导出版式（对齐源表 Expenses）
+
+- 第 1 行：A1 写标题 `Expense`，D1 写金额合计（与源表同位置）；
+- 第 2 行表头 6 列：`Date / Project / Name / Expense / Reason / Explanation`（源表最后一列 Reimbursement date 已去掉）；
+- 数据从第 3 行开始，按**姓名 + 日期**排序，一个人的票据连在一起，便于按阶段贴票；
+- `Date` 列：单日发票写真实日期（`yyyy-mm-dd`，可排序筛选），跨天发票写 `2025-12-27 ~ 2026-01-03` 文本（源表也是这么混排的）；
+- `Reason` 列：劳保用品 / 工具 / 其他带明细，一格内写成「工具-22mm 套筒」；
+- 同一天多张发票 = 多行；一张票跨多天 = 单行加区间文本。当前只做**全量导出**，忽略结算月与筛选条件。
+
+### 建表
+
+```bash
+cd WechatBackEnd
+python scripts/migrate_expense.py --print-sql   # 只打印建表 DDL
+python scripts/migrate_expense.py --dry-run     # 只体检不改（上生产先跑这个）
+python scripts/migrate_expense.py               # 执行：空库建表；已存在则只补缺失列/索引
+```
+
+与 `migrate_trip.py` 一样是幂等的：重复执行安全，已有列和数据不会被改动。
+
 ## 环境配置
 
 ### 1. 安装依赖
@@ -202,7 +292,7 @@ alembic revision --autogenerate -m "Initial migration"
 alembic upgrade head
 ```
 
-> 说明：当前 `alembic/versions` 为空，服务启动也不会自动建表。出差记录表 `trip_record` 请使用 `scripts/migrate_trip.py` 创建/升级（幂等），详见上文「出差记录填写模块 → 建表 / 升级」。
+> 说明：当前 `alembic/versions` 为空，服务启动也不会自动建表。出差记录表 `trip_record` 请使用 `scripts/migrate_trip.py` 创建/升级（幂等），出差费用表 `expense_record` 请使用 `scripts/migrate_expense.py`（幂等），详见上文对应模块的「建表」小节。
 
 ## 启动服务
 
@@ -248,6 +338,7 @@ FastAPI 自动生成了交互式 API 文档：
 - **User**: 用户信息（`name`、`email` 各自唯一，姓名即唯一身份；删除为软删除 `is_active=False`）
 - **Ticket**: 工单信息
 - **TripRecord**: 出差记录 / 工作日报（`user_id`、`trip_date`、`project`、`task`、`customer`、`worktime_begin`、`worktime_end`、`total_worktime`、`remark`、`cycle_key`、`create_at`、`update_at`）
+- **ExpenseRecord**: 出差费用报销（`user_id`、`expense_date`、`expense_date_end`、`project`、`reason`、`reason_detail`、`expense`、`explanation`、`cycle_key`、`create_at`、`update_at`；一天可多条、一条可跨天）
 - **Survey**: 问卷信息
 - **RAG**: 知识库相关模型
 
