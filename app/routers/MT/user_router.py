@@ -18,10 +18,15 @@ from app.schemas.user_schema import (
     UserUpdate,
     UserLogin,
     UserPublic,
-    UserPasswordChange
+    UserPasswordChange,
+    WxLoginRequest,
+    WxBindRequest,
+    WxLoginResponse,
 )
 from app.dependencies.auth import get_current_user, require_admin
 from app.models.user import User
+from app.services import wx_auth_service
+from app.utils.wx_api import code_to_openid
 from datetime import datetime, timezone
 from typing import List
 from app.logger import get_logger
@@ -123,6 +128,45 @@ async def get_users(
 async def get_current_user_info(current_user: User = Depends(get_current_user)):
     """获取当前登录用户信息：前端刷新后用它补齐姓名等资料"""
     return {"user": UserPublic.model_validate(current_user)}
+
+
+# ——— 小程序微信登录 / 绑定 ———
+# 注意：这些静态路径必须声明在 /{user_id} 之前。
+@router.post("/wx-login", response_model=WxLoginResponse)
+async def wx_login(payload: WxLoginRequest, db: AsyncSession = Depends(get_db)):
+    """小程序启动时调用：已绑定直接签 JWT，未绑定返回 bound=false 让前端输密码。
+
+    openid 由后端拿 code 向微信换取，前端不传 openid 明文。
+    """
+    openid = await code_to_openid(payload.code)
+    user, token = await wx_auth_service.wx_login(db, openid)
+    if user is None:
+        logger.info("微信 openid 未绑定账号，需要账号密码登录")
+        return {"bound": False}
+    logger.info(f"微信免密登录成功: {user.id}/{user.name}")
+    return {"bound": True, "user": UserPublic.model_validate(user), "token": token}
+
+
+@router.post("/wx-bind", response_model=UserResponse)
+async def wx_bind(payload: WxBindRequest, db: AsyncSession = Depends(get_db)):
+    """首次登录 / 换微信号：校验账号密码后绑定 openid 并签发 JWT。
+
+    双向唯一：覆盖账号原来的绑定，同时解绑这个微信号原先绑定的其它账号。
+    """
+    openid = await code_to_openid(payload.code)
+    user, token = await wx_auth_service.wx_bind(db, payload.name, payload.password, openid)
+    logger.info(f"微信绑定登录成功: {user.id}/{user.name}")
+    return {"user": UserPublic.model_validate(user), "token": token}
+
+
+@router.post("/wx-unbind")
+async def wx_unbind(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """自助解绑微信：解绑后下次进入需重新输入账号密码"""
+    changed = await wx_auth_service.wx_unbind(db, current_user)
+    return {"message": "已解绑微信" if changed else "当前账号未绑定微信"}
 
 
 # 修改自己的登录密码

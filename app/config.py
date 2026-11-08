@@ -17,6 +17,10 @@ class Settings(BaseSettings):
     REDIS_HOST: str = "localhost"
     REDIS_PORT: int = 6379
     REDIS_PASSWORD: str = ""
+
+    # 微信小程序登录（AppSecret 只放后端，绝不下发到小程序）
+    WX_APPID: str = ""
+    WX_APPSECRET: str = ""
     
     # 数据库连接池配置
     POOL_SIZE: int = 5

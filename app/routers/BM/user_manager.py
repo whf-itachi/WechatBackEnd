@@ -19,6 +19,7 @@ from app.schemas.user_schema import (
     UserPasswordReset,
 )
 from app.services.user_service import create_user_service, verify_user_login, get_password_hash
+from app.services import wx_auth_service
 
 router = APIRouter(route_class=EnvelopingRoute)
 logger = get_logger('user_router')
@@ -243,3 +244,28 @@ async def delete_user(
                 "errors": [str(e)]
             }
         )
+
+
+# 管理员解绑用户微信（微信号被封 / 员工离职 / 换设备兜底）
+@router.post("/wx-unbind/{user_id}")
+async def admin_unbind_wx(
+        user_id: int,
+        db: AsyncSession = Depends(get_db),
+        token_payload: dict = Depends(bm_verify_token)
+):
+    """解绑后该员工下次进入小程序需重新输入账号密码并重新绑定。"""
+    try:
+        user = await wx_auth_service.admin_unbind(db, user_id)
+    except HTTPException:
+        raise
+    except Exception as e:
+        await db.rollback()
+        logger.error(f"管理员解绑微信失败 - 系统异常: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail={"message": "解绑失败", "errors": [str(e)]})
+
+    logger.info(f"管理员 {token_payload.get('user_id')} 解绑了用户 {user.id}/{user.name} 的微信")
+    return {
+        "user_id": user.id,
+        "user_name": user.name,
+        "message": "已解绑微信，该用户下次进入需重新输入账号密码"
+    }

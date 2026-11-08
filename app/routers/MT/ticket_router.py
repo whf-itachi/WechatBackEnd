@@ -239,6 +239,10 @@ async def create_ticket(
         background_tasks.add_task(process_full_rag_upload, file_bytes, dict_data)
 
         return {"message": "工单创建成功", "ticket_id": ticket.id, "device_name": device.device_name}
+    except HTTPException:
+        # 设备不存在、附件上传失败等明确的业务错误要原样返回，别被下面兜底成笼统的 500
+        await db.rollback()
+        raise
     except Exception as e:
         logger.error(f"创建工单时发生未预期错误: {str(e)}", exc_info=True)
         await db.rollback()
@@ -662,6 +666,9 @@ async def get_ticket(
 
 
 # 根据工单 id 修改工单信息
+# 小程序原生 wx.uploadFile 只能发 POST，无法发 PUT；这里加一个等价的 POST 别名，
+# 与 PUT 共用同一套校验与处理逻辑（附件上传/删除、知识库重建）。
+@router.post("/{ticket_id}/update", response_model=TicketResponse, include_in_schema=False)
 @router.put("/{ticket_id}", response_model=TicketResponse)
 async def update_ticket(
     background_tasks: BackgroundTasks,
@@ -793,6 +800,9 @@ async def update_ticket(
         logger.info(f"成功更新工单信息: {ticket.id}")
         return response_data
 
+    except HTTPException:
+        await db.rollback()
+        raise
     except Exception as e:
         await db.rollback()
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))

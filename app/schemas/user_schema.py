@@ -82,3 +82,25 @@ class UserResponse(SQLModel):
     token: Optional[str] = Field(None, description="访问令牌")
 
     model_config = ConfigDict(from_attributes=True)
+
+
+# ——— 小程序微信登录 ———
+class WxLoginRequest(SQLModel):
+    """小程序 wx.login() 拿到的一次性 code，openid 一律由后端换取"""
+    code: str = Field(..., description="wx.login 返回的 code")
+
+
+class WxBindRequest(SQLModel):
+    """首次登录 / 换微信号：账号密码 + 一次性 code"""
+    code: str = Field(..., description="wx.login 返回的 code")
+    name: str = Field(..., description="用户名或手机号")
+    password: str = Field(..., description="登录密码")
+
+
+class WxLoginResponse(SQLModel):
+    """bound=false 表示这个微信号还没绑定账号，前端应展示密码登录页"""
+    bound: bool = Field(..., description="是否已绑定账号")
+    user: Optional[UserPublic] = None
+    token: Optional[str] = None
+
+    model_config = ConfigDict(from_attributes=True)
