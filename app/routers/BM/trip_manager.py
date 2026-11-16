@@ -4,9 +4,10 @@
 - 一律按 cycle_key（结算月）过滤，边界日 25 号不会被相邻两个月重复统计；
 - 明细支持按姓名、项目、具体日期再过滤；
 - 导出工作表与 `Daily Report in China all_2026.xlsx` 的「Working Overview」对齐（原表的
-  Waiting time 列不再输出，导出为 A~I 九列）：
+  Waiting time 列不再输出，基础数据为 A~I 九列），并在末尾追加 J 列「星期」：
   A Date / B Project / C Task / D Customer / E Name /
-  F Worktime Begin / G Worktime End / H Total Worktime / I 备注。
+  F Worktime Begin / G Worktime End / H Total Worktime / I 备注 / J 星期。
+  星期放在最后一列是为了不打乱 A~I 的顺序，数据行仍可直接贴回总表。
 - 导出支持 `all_data=true`：忽略结算月与筛选条件，一次导出全部历史记录。
 """
 
@@ -151,10 +152,11 @@ async def list_records(
 
 
 def _build_workbook(rows) -> openpyxl.Workbook:
-    """组装导出工作簿：单个工作表，与原表「Working Overview」同版式。
+    """组装导出工作簿：单个工作表，与原表「Working Overview」同版式 + 末尾星期列。
 
     rows: [(TripRecord, user_name), ...]，已按日期、姓名排好序。
     抽成纯函数是为了不连数据库也能直接验证导出版式。
+    星期与 /list 明细页共用 WEEKDAY_CN，口径一致（周一~周日）。
     """
     wb = openpyxl.Workbook()
 
@@ -165,14 +167,15 @@ def _build_workbook(rows) -> openpyxl.Workbook:
     ws["A1"] = "Daily Report Technician China"
     ws["A1"].font = Font(bold=True, size=14)
     ws["A1"].alignment = Alignment(horizontal="center", vertical="center")
-    ws.merge_cells("A1:I1")
+    ws.merge_cells("A1:J1")
     ws.row_dimensions[1].height = 28
 
     # 表头放在第 4 行，与原表一致：复制数据行即可直接贴回总表
-    # 原表的 Waiting time（等待时间）列不再输出，故这里只有 A~I 九列
+    # 原表的 Waiting time（等待时间）列不再输出，故基础数据为 A~I 九列；
+    # J 列「星期」是后台明细页的补充字段，追加在末尾，不打乱 A~I 的列序
     headers = [
         "Date", "Project", "Task", "Customer", "Name",
-        "Worktime Begin", "Worktime End", "Total Worktime", "备注",
+        "Worktime Begin", "Worktime End", "Total Worktime", "备注", "星期",
     ]
     # 表头用加粗黑体区分，不加底色填充
     header_font = Font(name="黑体", size=11, bold=True)
@@ -195,9 +198,11 @@ def _build_workbook(rows) -> openpyxl.Workbook:
         if r.total_worktime is not None:
             ws.cell(row=row, column=8, value=_as_float(r.total_worktime)).number_format = "0.00"
         ws.cell(row=row, column=9, value=r.remark)
+        # 星期不落库，按 trip_date 现算，文案与页面明细完全一致
+        ws.cell(row=row, column=10, value=WEEKDAY_CN[r.trip_date.weekday()])
 
-    # 列宽照抄原表（去掉 Waiting time 后依次顺延），贴回时不至于错位
-    for col, width in enumerate([11, 12.33, 58, 24.33, 22.78, 19.78, 18.11, 19.33, 20], 1):
+    # 列宽：A~I 照抄原表（去掉 Waiting time 后依次顺延），贴回时不至于错位；J 星期给窄列
+    for col, width in enumerate([11, 12.33, 58, 24.33, 22.78, 19.78, 18.11, 19.33, 20, 9], 1):
         ws.column_dimensions[get_column_letter(col)].width = width
 
     # 数据行统一左对齐：日期、时间、时长默认是右对齐，和文本混排会参差不齐
@@ -210,7 +215,7 @@ def _build_workbook(rows) -> openpyxl.Workbook:
                 )
 
     # 有内容的区域统一加细边框：标题行、空行、表头、数据行一个整框（与原表一致）
-    for row in ws.iter_rows(min_row=1, max_row=4 + len(rows), max_col=9):
+    for row in ws.iter_rows(min_row=1, max_row=4 + len(rows), max_col=10):
         for cell in row:
             cell.border = THIN_BORDER
     ws.freeze_panes = "A5"
