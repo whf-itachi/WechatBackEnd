@@ -4,10 +4,7 @@
 - 一律按 cycle_key（结算月）过滤，边界日 25 号不会被相邻两个月重复统计；
 - 明细支持按姓名、项目、具体日期再过滤；
 - 导出工作表与 `Daily Report in China all_2026.xlsx` 的「Working Overview」对齐（原表的
-  Waiting time 列不再输出，基础数据为 A~I 九列），并在末尾追加 J 列「星期」：
-  A Date / B Project / C Task / D Customer / E Name /
-  F Worktime Begin / G Worktime End / H Total Worktime / I 备注 / J 星期。
-  星期放在最后一列是为了不打乱 A~I 的顺序，数据行仍可直接贴回总表。
+  Waiting time 列不再输出，基础数据为 A~I 九列），并把「星期」放在首列 A 列。
 - 导出支持 `all_data=true`：忽略结算月与筛选条件，一次导出全部历史记录。
 """
 
@@ -152,7 +149,7 @@ async def list_records(
 
 
 def _build_workbook(rows) -> openpyxl.Workbook:
-    """组装导出工作簿：单个工作表，与原表「Working Overview」同版式 + 末尾星期列。
+    """组装导出工作簿：单个工作表，与原表「Working Overview」同版式 + 首列星期。
 
     rows: [(TripRecord, user_name), ...]，已按日期、姓名排好序。
     抽成纯函数是为了不连数据库也能直接验证导出版式。
@@ -170,12 +167,12 @@ def _build_workbook(rows) -> openpyxl.Workbook:
     ws.merge_cells("A1:J1")
     ws.row_dimensions[1].height = 28
 
-    # 表头放在第 4 行，与原表一致：复制数据行即可直接贴回总表
+    # 表头放在第 4 行，与原表一致
     # 原表的 Waiting time（等待时间）列不再输出，故基础数据为 A~I 九列；
-    # J 列「星期」是后台明细页的补充字段，追加在末尾，不打乱 A~I 的列序
+    # A 列「星期」是后台明细页的补充字段，现按需求放在首列，其余列依次顺延
     headers = [
-        "Date", "Project", "Task", "Customer", "Name",
-        "Worktime Begin", "Worktime End", "Total Worktime", "备注", "星期",
+        "星期", "Date", "Project", "Task", "Customer", "Name",
+        "Worktime Begin", "Worktime End", "Total Worktime", "备注",
     ]
     # 表头用加粗黑体区分，不加底色填充
     header_font = Font(name="黑体", size=11, bold=True)
@@ -186,32 +183,32 @@ def _build_workbook(rows) -> openpyxl.Workbook:
 
     for idx, (r, user_name) in enumerate(rows):
         row = 5 + idx
-        ws.cell(row=row, column=1, value=r.trip_date).number_format = "yyyy-mm-dd"
-        ws.cell(row=row, column=2, value=r.project)
-        ws.cell(row=row, column=3, value=r.task)
-        ws.cell(row=row, column=4, value=r.customer)
-        ws.cell(row=row, column=5, value=user_name or "（账号已删除）")
+        # 星期不落库，按 trip_date 现算，文案与页面明细完全一致；放在首列
+        ws.cell(row=row, column=1, value=WEEKDAY_CN[r.trip_date.weekday()])
+        ws.cell(row=row, column=2, value=r.trip_date).number_format = "yyyy-mm-dd"
+        ws.cell(row=row, column=3, value=r.project)
+        ws.cell(row=row, column=4, value=r.task)
+        ws.cell(row=row, column=5, value=r.customer)
+        ws.cell(row=row, column=6, value=user_name or "（账号已删除）")
         if r.worktime_begin:
-            ws.cell(row=row, column=6, value=r.worktime_begin).number_format = "hh:mm"
+            ws.cell(row=row, column=7, value=r.worktime_begin).number_format = "hh:mm"
         if r.worktime_end:
-            ws.cell(row=row, column=7, value=r.worktime_end).number_format = "hh:mm"
+            ws.cell(row=row, column=8, value=r.worktime_end).number_format = "hh:mm"
         if r.total_worktime is not None:
-            ws.cell(row=row, column=8, value=_as_float(r.total_worktime)).number_format = "0.00"
-        ws.cell(row=row, column=9, value=r.remark)
-        # 星期不落库，按 trip_date 现算，文案与页面明细完全一致
-        ws.cell(row=row, column=10, value=WEEKDAY_CN[r.trip_date.weekday()])
+            ws.cell(row=row, column=9, value=_as_float(r.total_worktime)).number_format = "0.00"
+        ws.cell(row=row, column=10, value=r.remark)
 
-    # 列宽：A~I 照抄原表（去掉 Waiting time 后依次顺延），贴回时不至于错位；J 星期给窄列
-    for col, width in enumerate([11, 12.33, 58, 24.33, 22.78, 19.78, 18.11, 19.33, 20, 9], 1):
+    # 列宽：A 星期给窄列；B~J 照抄原表 A~I（去掉 Waiting time 后依次顺延）
+    for col, width in enumerate([9, 11, 12.33, 58, 24.33, 22.78, 19.78, 18.11, 19.33, 20], 1):
         ws.column_dimensions[get_column_letter(col)].width = width
 
     # 数据行统一左对齐：日期、时间、时长默认是右对齐，和文本混排会参差不齐
-    # C（Task）、I（备注）是长文本，额外自动换行；所有单元格顶端对齐
+    # D（Task）、J（备注）是长文本，额外自动换行；所有单元格顶端对齐
     if rows:
         for row in ws.iter_rows(min_row=5, max_row=4 + len(rows)):
             for cell in row:
                 cell.alignment = Alignment(
-                    horizontal="left", vertical="top", wrap_text=cell.column in (3, 9)
+                    horizontal="left", vertical="top", wrap_text=cell.column in (4, 10)
                 )
 
     # 有内容的区域统一加细边框：标题行、空行、表头、数据行一个整框（与原表一致）
