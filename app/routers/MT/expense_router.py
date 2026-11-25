@@ -84,19 +84,20 @@ def _record_deadline(cycle_key: str) -> Optional[date]:
 
 
 def _check_date_window(start: date, end: Optional[date]) -> None:
-    """日期窗口校验：只允许当前周期内、且不晚于今天的日期。
+    """日期窗口校验：允许补填历史周期，只要票期所属周期尚未过截止日（25 号当天及之前）。
 
-    跨天费用两端都要落在窗口内 —— 否则一条记录会把票期写到未来，账目提前入账。
+    归属按起始日所属周期判定，与该记录 cycle_key 的生成口径一致。
+    跨天票结束日仍需 <= 今天，避免把票期写到未来、账目提前入账。
     """
-    win_start, win_end, _ = current_cycle()
+    _, cyc_end, _ = cycle_of(start)
     today = today_cn()
-    if start < win_start or start > win_end:
-        raise HTTPException(
-            status_code=400,
-            detail=f"日期不在当前填报周期内（{win_start:%Y-%m-%d} ~ {win_end:%Y-%m-%d}）",
-        )
     if start > today:
         raise HTTPException(status_code=400, detail="不能填写未来日期")
+    if today > cyc_end:
+        raise HTTPException(
+            status_code=400,
+            detail=f"该票期所属周期已于 {cyc_end:%Y-%m-%d} 截止，不可再填写",
+        )
     if end:
         if end < start:
             raise HTTPException(status_code=400, detail="结束日期不能早于开始日期")

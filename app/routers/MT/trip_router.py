@@ -131,22 +131,22 @@ async def create_record(
 ):
     """一天一条：提交后该日期即锁定，重复提交返回 409（截止前可用 PUT 修改内容）"""
     today = today_cn()
-    start, end, _cur_key = current_cycle()
     trip_date = payload.trip_date
     # 归属按「出差日期」判定，而不是「什么时候提交」：
     # 否则同一个日期在 25 号前后提交会落到不同结算月，导出结果不可复现。
-    key = cycle_of(trip_date)[2]
+    cyc_start, cyc_end, key = cycle_of(trip_date)
 
     # ---------- 1. 周期与日期校验 ----------
+    # 允许补填历史周期，只要该日期所属周期尚未过截止日（25 号当天及之前）。
     if not (payload.project or "").strip():
         raise HTTPException(status_code=400, detail="项目不能为空")
-    if trip_date < start or trip_date > end:
-        raise HTTPException(
-            status_code=400,
-            detail=f"该日期不在当前填报周期内（{start:%Y-%m-%d} ~ {end:%Y-%m-%d}）",
-        )
     if trip_date > today:
         raise HTTPException(status_code=400, detail="不能填写未来日期")
+    if today > cyc_end:
+        raise HTTPException(
+            status_code=400,
+            detail=f"该日期所属周期已于 {cyc_end:%Y-%m-%d} 截止，不可再填写",
+        )
 
     # ---------- 2. 一天一条：先查重（并发由唯一键兜底） ----------
     existed = (

@@ -4,12 +4,13 @@
 - 结算日为每月 25 日。周期窗口 = [上月 25 日, 本月 25 日]，结算月 = 本月（YYYY-MM）。
   例：结算月 2026-11 的窗口是 2026-10-25 ~ 2026-11-25。
 - 「当前可填报周期」= 包含今天的那一个窗口：
-  * 今天 >= 25 日 → 窗口起点为今天所在月的 25 日，结算月为下个月；
-  * 今天 <  25 日 → 窗口起点为上个月 25 日，结算月为今天所在月。
-  这样「过了 25 号」就自动进入下一个周期，旧周期随之关闭、不能再补填。
+  * 今天 > 25 日 → 结算月为下个月；
+  * 今天 <= 25 日 → 结算月为今天所在月。
+  25 号是结算日、仍算本月；26 号起才进入下一个周期，旧周期随之关闭、不能再补填。
 - 周期内只允许填写 <= 今天的日期（不能填未来）。
-- 25 号这个边界日会同时落在相邻两个窗口里，因此记录在写入时按「填写当时的当前周期」
-  打上 cycle_key，后台一律按 cycle_key 归集，保证不重复计数。
+- 窗口是闭区间，相邻窗口在 25 号这个端点重叠。归属统一按「25 号算本月、26 号算下月」
+  判定：cycle_of() 与 cycle_by_key() 对同一天的归属完全一致，不存在边界日归到相邻月
+  的分歧。记录写入时按所属周期打 cycle_key，后台按 cycle_key 归集，不重复计数。
 """
 
 from datetime import date, datetime, timedelta, timezone
@@ -54,8 +55,11 @@ def _month_day(year: int, month: int, day: int) -> date:
 
 
 def cycle_of(day: date) -> tuple[date, date, str]:
-    """给定日期，返回其所在填报窗口 (start, end, cycle_key)"""
-    if day.day >= DEADLINE_DAY:
+    """给定日期，返回其所在填报窗口 (start, end, cycle_key)
+
+    25 号算本月、26 号起算下月，与 cycle_by_key() 的窗口定义一致。
+    """
+    if day.day > DEADLINE_DAY:
         start = date(day.year, day.month, DEADLINE_DAY)
         y, m = _shift_month(day.year, day.month, 1)
         end = date(y, m, DEADLINE_DAY)
