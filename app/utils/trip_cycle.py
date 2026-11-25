@@ -1,16 +1,18 @@
 """出差填报周期规则（单一事实来源，移动端/后台都必须调用这里的函数）
 
 规则定义：
-- 结算日为每月 25 日。周期窗口 = [上月 25 日, 本月 25 日]，结算月 = 本月（YYYY-MM）。
-  例：结算月 2026-11 的窗口是 2026-10-25 ~ 2026-11-25。
+- 结算日为每月 25 日。周期窗口 = [上月 26 日, 本月 25 日]，结算月 = 本月（YYYY-MM）。
+  例：结算月 2026-11 的窗口是 2026-10-26 ~ 2026-11-25。
+  窗口起点取 26 日而非 25 日，保证一个窗口内只有一个 25 号（即本期截止日），
+  相邻窗口首尾相接、不再在 25 号这个端点重叠。
 - 「当前可填报周期」= 包含今天的那一个窗口：
   * 今天 > 25 日 → 结算月为下个月；
   * 今天 <= 25 日 → 结算月为今天所在月。
   25 号是结算日、仍算本月；26 号起才进入下一个周期，旧周期随之关闭、不能再补填。
 - 周期内只允许填写 <= 今天的日期（不能填未来）。
-- 窗口是闭区间，相邻窗口在 25 号这个端点重叠。归属统一按「25 号算本月、26 号算下月」
-  判定：cycle_of() 与 cycle_by_key() 对同一天的归属完全一致，不存在边界日归到相邻月
-  的分歧。记录写入时按所属周期打 cycle_key，后台按 cycle_key 归集，不重复计数。
+- 归属统一按「25 号算本月、26 号算下月」判定：cycle_of() 与 cycle_by_key() 对同一天的
+  窗口与归属完全一致，不存在边界日归到相邻月的分歧。记录写入时按所属周期打 cycle_key，
+  后台按 cycle_key 归集，不重复计数。
 """
 
 from datetime import date, datetime, timedelta, timezone
@@ -60,20 +62,22 @@ def cycle_of(day: date) -> tuple[date, date, str]:
     25 号算本月、26 号起算下月，与 cycle_by_key() 的窗口定义一致。
     """
     if day.day > DEADLINE_DAY:
-        start = date(day.year, day.month, DEADLINE_DAY)
+        # 26 号起算下月：窗口起点 = 本月 26 日（不是 25 日，否则与上一期在 25 号重叠）
+        start = date(day.year, day.month, DEADLINE_DAY + 1)
         y, m = _shift_month(day.year, day.month, 1)
         end = date(y, m, DEADLINE_DAY)
         key_y, key_m = y, m
     else:
+        # 25 号及之前算本月：窗口起点 = 上月 26 日
         py, pm = _shift_month(day.year, day.month, -1)
-        start = date(py, pm, DEADLINE_DAY)
+        start = date(py, pm, DEADLINE_DAY + 1)
         end = date(day.year, day.month, DEADLINE_DAY)
         key_y, key_m = day.year, day.month
     return start, end, f"{key_y:04d}-{key_m:02d}"
 
 
 def cycle_by_key(key: str) -> tuple[date, date, str]:
-    """按结算月反查窗口，key 形如 2026-11 → (2026-10-25, 2026-11-25, '2026-11')"""
+    """按结算月反查窗口，key 形如 2026-11 → (2026-10-26, 2026-11-25, '2026-11')"""
     parts = (key or "").split("-")
     if len(parts) != 2:
         raise ValueError("结算月格式应为 YYYY-MM")
@@ -81,7 +85,7 @@ def cycle_by_key(key: str) -> tuple[date, date, str]:
     if not (1 <= month <= 12):
         raise ValueError("结算月格式应为 YYYY-MM")
     py, pm = _shift_month(year, month, -1)
-    return date(py, pm, DEADLINE_DAY), date(year, month, DEADLINE_DAY), f"{year:04d}-{month:02d}"
+    return date(py, pm, DEADLINE_DAY + 1), date(year, month, DEADLINE_DAY), f"{year:04d}-{month:02d}"
 
 
 def current_cycle() -> tuple[date, date, str]:
